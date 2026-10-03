@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, useTransition } from 'react'
 import './App.css'
+import LandingPage from './LandingPage.jsx'
 
 const statDefinitions = [
   { label: 'Active Projects', key: 'projects', tone: 'purple' },
@@ -83,6 +84,7 @@ function formatBytes(bytes) {
 
 function App() {
   const [loggedIn, setLoggedIn] = useState(false)
+  const [publicView, setPublicView] = useState('landing')
   const [authMode, setAuthMode] = useState('login')
   const [currentView, setCurrentView] = useState('dashboard')
   const [search, setSearch] = useState('')
@@ -212,10 +214,31 @@ function App() {
     }
   }
 
+  function openRegistration() {
+    setError('')
+    setAuthMode('register')
+    setPublicView('auth')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function openLogin() {
+    setError('')
+    setAuthMode('login')
+    setPublicView('auth')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   if (!loggedIn) {
+    if (publicView === 'landing') {
+      return <LandingPage onGetStarted={openRegistration} onLogin={openLogin} />
+    }
+
     return (
       <div className="auth-shell">
         <div className="auth-card">
+          <button type="button" className="link-btn auth-back-link" onClick={() => { setError(''); setPublicView('landing') }}>
+            ← Back to Workora
+          </button>
           <div className="auth-brand">
             <div className="brand-mark">W</div>
             <div>

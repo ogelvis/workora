@@ -820,6 +820,10 @@ input, select {
   padding-bottom: 1rem;
 }
 
+.auth-back-link {
+  margin: 0 0 1rem;
+}
+
 .auth-brand p {
   margin: 0;
   font-weight: 800;
