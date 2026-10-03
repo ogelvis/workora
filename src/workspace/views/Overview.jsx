@@ -132,7 +132,7 @@ function Overview() {
         <div className="card">
           <div className="card-head"><div><h2>Recent activity</h2></div></div>
           <ul className="activity">
-            {(dashboard?.activity || []).map((entry) => (
+            {(dashboard?.activity || []).slice(0, 5).map((entry) => (
               <li key={entry.id}>
                 <Avatar name={entry.user} size="sm" />
                 <div>
