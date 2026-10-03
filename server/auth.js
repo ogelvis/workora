@@ -19,7 +19,7 @@ export function sessionCookieOptions(maxAge) {
   }
 }
 
-function hashToken(token) {
+export function hashToken(token) {
   return createHmac('sha256', process.env.SESSION_SECRET).update(token).digest()
 }
 
@@ -49,7 +49,7 @@ export async function requireAuth(request, response, next) {
 
   try {
     const result = await pool.query(
-      `SELECT u.id, u.full_name, u.email, om.organization_id, o.name AS organization_name, om.role
+      `SELECT s.id AS session_id, u.id, u.full_name, u.email, om.organization_id, o.name AS organization_name, om.role
        FROM user_sessions s
        JOIN users u ON u.id = s.user_id
        JOIN organization_members om ON om.user_id = u.id
@@ -65,6 +65,7 @@ export async function requireAuth(request, response, next) {
 
     const row = result.rows[0]
     request.auth = {
+      sessionId: row.session_id,
       userId: row.id,
       fullName: row.full_name,
       email: row.email,

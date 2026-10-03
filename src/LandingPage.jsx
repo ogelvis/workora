@@ -199,7 +199,7 @@ function LandingPage({ onGetStarted, onLogin }) {
           <article className="lp-plan lp-plan-featured lp-reveal"><span className="lp-plan-label">FOR TEAMS IN MOTION</span><h3>Business</h3><p>More room and capabilities for growing teams.</p><div className="lp-plan-feature"><span>✓</span> Workspace for up to 25 members</div><div className="lp-plan-feature"><span>✓</span> Up to 100 GB storage</div><div className="lp-plan-feature"><span>✓</span> CRM, campaigns and Document Vault</div><button type="button" onClick={onGetStarted}>Explore Business <span>↗</span></button></article>
           <article className="lp-plan lp-reveal"><span className="lp-plan-label">BUILT AROUND YOU</span><h3>Enterprise</h3><p>Room for larger teams and advanced needs.</p><div className="lp-plan-feature"><span>✓</span> Expanded team and storage limits</div><div className="lp-plan-feature"><span>✓</span> Advanced administration</div><div className="lp-plan-feature"><span>✓</span> Tailored workspace requirements</div><button type="button" onClick={onGetStarted}>Talk to our team <span>↗</span></button></article>
         </div>
-        <p className="lp-pricing-footnote">Plan limits shown are illustrative. Pricing, billing and feature availability depend on configuration; some areas shown are previews and are not yet connected. No payment is taken during workspace creation.</p>
+        <p className="lp-pricing-footnote">Every workspace starts on a 14-day Starter trial with these limits applied. Online payments are not connected yet, so upgrades are not available and no payment is taken.</p>
       </section>
 
       <section className="lp-cta-section lp-reveal">

@@ -1,10 +1,13 @@
 import 'dotenv/config'
 import pg from 'pg'
 
-const { Pool } = pg
+const { Pool, types } = pg
+
+// Return DATE columns as plain YYYY-MM-DD strings instead of timezone-shifted Date objects.
+types.setTypeParser(1082, (value) => value)
 
 if (!process.env.DATABASE_URL) {
-  throw new Error('DATABASE_URL is required. Copy .env.example to .env and configure Neon.')
+  throw new Error('DATABASE_URL is missing. Locally, add it to .env (see .env.example).')
 }
 
 export const pool = new Pool({
