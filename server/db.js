@@ -7,7 +7,7 @@ const { Pool, types } = pg
 types.setTypeParser(1082, (value) => value)
 
 if (!process.env.DATABASE_URL) {
-  throw new Error('DATABASE_URL is required. Copy .env.example to .env and configure Neon.')
+  throw new Error('DATABASE_URL is missing. Locally, add it to .env (see .env.example).')
 }
 
 export const pool = new Pool({

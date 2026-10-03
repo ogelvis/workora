@@ -1,5 +1,6 @@
 import 'dotenv/config'
 import { existsSync } from 'node:fs'
+import { readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import express from 'express'
@@ -17,12 +18,14 @@ if (
   process.env.SESSION_SECRET.length < 32 ||
   process.env.SESSION_SECRET.startsWith('REPLACE_WITH_')
 ) {
-  throw new Error('SESSION_SECRET must be configured with at least 32 characters.')
+  throw new Error('SESSION_SECRET is missing or shorter than 32 characters. Locally, add it to .env (see .env.example).')
 }
 
 const app = express()
 const isProduction = process.env.NODE_ENV === 'production'
 const rootDir = path.dirname(fileURLToPath(import.meta.url))
+const migrationsDir = path.join(rootDir, 'db', 'migrations')
+const LATEST_MIGRATION = '003_team_files_chat_profile.sql'
 
 app.disable('x-powered-by')
 app.set('trust proxy', 1)
@@ -43,7 +46,18 @@ app.use((request, response, next) => {
 app.get('/api/health', async (_request, response, next) => {
   try {
     await pool.query('SELECT 1')
-    return response.json({ status: 'ok', database: 'connected' })
+    // Serverless bundles may omit the .sql files; fall back to the newest migration this code needs.
+    const expected = await readdir(migrationsDir)
+      .then((names) => names.filter((name) => /^\d+_.+\.sql$/.test(name)))
+      .catch(() => [LATEST_MIGRATION])
+    let applied = []
+    try {
+      applied = (await pool.query('SELECT filename FROM schema_migrations')).rows.map((row) => row.filename)
+    } catch {
+      // schema_migrations does not exist until the first migration run.
+    }
+    const pending = expected.filter((name) => !applied.includes(name))
+    return response.json({ status: pending.length ? 'needs-migration' : 'ok', database: 'connected', pendingMigrations: pending })
   } catch (error) {
     return next(error)
   }
