@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, useTransition } from 'react'
 import './App.css'
 import LandingPage from './LandingPage.jsx'
+import CreateRecordDialog from './CreateRecordDialog.jsx'
 
 const statDefinitions = [
   { label: 'Active Projects', key: 'projects', tone: 'purple' },
@@ -12,6 +13,8 @@ const statDefinitions = [
 ]
 
 const quickActions = ['New Project', 'Add Client', 'Create Task']
+const campaignStatuses = ['Planning', 'Active', 'Review', 'Completed', 'Paused']
+const taskStatuses = ['To Do', 'In Progress', 'Review', 'Completed']
 
 const businessNav = [
   { key: 'dashboard', label: 'Dashboard' },
@@ -96,6 +99,11 @@ function App() {
   const [clients, setClients] = useState([])
   const [projects, setProjects] = useState([])
   const [tasks, setTasks] = useState([])
+  const [campaigns, setCampaigns] = useState([])
+  const [calendarEvents, setCalendarEvents] = useState([])
+  const [notifications, setNotifications] = useState([])
+  const [modalType, setModalType] = useState(null)
+  const [saving, setSaving] = useState(false)
 
   const role = account?.role || 'staff'
   const navItems = useMemo(
@@ -133,17 +141,23 @@ function App() {
   const recentActivity = dashboard?.activity || []
 
   const refreshWorkspace = useCallback(async () => {
-    const [dashboardData, clientData, projectData, taskData] = await Promise.all([
+    const [dashboardData, clientData, projectData, taskData, campaignData, calendarData, notificationData] = await Promise.all([
       api('/api/dashboard'),
       role === 'staff' ? Promise.resolve({ clients: [] }) : api('/api/clients'),
       role === 'staff' ? Promise.resolve({ projects: [] }) : api('/api/projects'),
       api('/api/tasks'),
+      role === 'staff' ? Promise.resolve({ campaigns: [] }) : api('/api/campaigns'),
+      api('/api/calendar'),
+      api('/api/notifications'),
     ])
     startTransition(() => {
       setDashboard(dashboardData)
       setClients(clientData.clients)
       setProjects(projectData.projects)
       setTasks(taskData.tasks)
+      setCampaigns(campaignData.campaigns)
+      setCalendarEvents(calendarData.events)
+      setNotifications(notificationData.notifications)
     })
   }, [role, startTransition])
 
@@ -199,16 +213,45 @@ function App() {
     }
   }
 
-  async function createRecord(resource, label, payload) {
-    const name = window.prompt(`Enter ${label}:`)
-    if (!name?.trim()) return
+  async function createRecord(resource, values) {
     setError('')
+    setSaving(true)
     try {
       await api(`/api/${resource}`, {
         method: 'POST',
-        body: JSON.stringify({ [resource === 'tasks' ? 'title' : 'name']: name.trim(), ...payload }),
+        body: JSON.stringify(values),
       })
       await refreshWorkspace()
+      setModalType(null)
+    } catch (requestError) {
+      setError(requestError.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function changeTaskStatus(task, status) {
+    try {
+      const result = await api(`/api/tasks/${task.id}`, { method: 'PATCH', body: JSON.stringify({ status }) })
+      setTasks((current) => current.map((entry) => entry.id === task.id ? { ...entry, ...result.task } : entry))
+    } catch (requestError) {
+      setError(requestError.message)
+    }
+  }
+
+  async function changeCampaignStatus(campaign, status) {
+    try {
+      const result = await api(`/api/campaigns/${campaign.id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) })
+      setCampaigns((current) => current.map((entry) => entry.id === campaign.id ? { ...entry, ...result.campaign } : entry))
+    } catch (requestError) {
+      setError(requestError.message)
+    }
+  }
+
+  async function markNotificationRead(notification) {
+    try {
+      await api(`/api/notifications/${notification.id}/read`, { method: 'PATCH' })
+      setNotifications((current) => current.map((entry) => entry.id === notification.id ? { ...entry, readAt: new Date().toISOString() } : entry))
     } catch (requestError) {
       setError(requestError.message)
     }
@@ -321,9 +364,9 @@ function App() {
   }
 
   function onQuickAction(action) {
-    if (action === 'New Project') return createRecord('projects', 'project name')
-    if (action === 'Add Client') return createRecord('clients', 'client name')
-    if (action === 'Create Task') return createRecord('tasks', 'task title')
+    if (action === 'New Project') return setModalType('projects')
+    if (action === 'Add Client') return setModalType('clients')
+    if (action === 'Create Task') return setModalType('tasks')
   }
 
   return (
@@ -384,6 +427,7 @@ function App() {
         <div className="content">
           {error && <div className="error-banner" role="alert">{error}<button type="button" onClick={() => setError('')}>Dismiss</button></div>}
           {isPending && <div className="empty-state" role="status">Refreshing workspace data…</div>}
+          <CreateRecordDialog type={modalType} clients={clients} projects={projects} busy={saving} onClose={() => setModalType(null)} onCreate={createRecord} />
           {currentView === 'dashboard' && (
             <>
               <section className="welcome-panel">
@@ -392,7 +436,7 @@ function App() {
                   <h2>Welcome back, {account?.user?.fullName}</h2>
                   <p>{today.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
                 </div>
-                {role !== 'staff' && <button type="button" className="primary-btn" onClick={() => createRecord('projects', 'project name')}>+ New project</button>}
+                {role !== 'staff' && <button type="button" className="primary-btn" onClick={() => setModalType('projects')}>+ New project</button>}
               </section>
 
               <section className="stats-grid">
@@ -453,7 +497,7 @@ function App() {
 
           {currentView === 'projects' && (
             <div className="panel full-panel">
-              <SectionHeader eyebrow="Project workspace" title="Project portfolio" action="Create project" onAction={() => createRecord('projects', 'project name')} />
+              <SectionHeader eyebrow="Project workspace" title="Project portfolio" action="Create project" onAction={() => setModalType('projects')} />
               <div className="project-grid">
                 {filteredProjects.map((project) => (
                   <article key={project.id} className="project-card">
@@ -472,7 +516,7 @@ function App() {
 
           {currentView === 'tasks' && (
             <div className="panel full-panel">
-              <SectionHeader eyebrow="Workflow" title="My tasks" action="New task" onAction={() => createRecord('tasks', 'task title')} />
+              <SectionHeader eyebrow="Workflow" title="My tasks" action="New task" onAction={() => setModalType('tasks')} />
               <div className="task-grid">
                 {filteredTasks.map((task) => (
                   <article key={task.id} className="task-card">
@@ -482,7 +526,9 @@ function App() {
                     </div>
                     <p>{task.assigneeName ? `Assigned to ${task.assigneeName}. ` : 'Unassigned. '}{task.description || 'No task description yet.'}</p>
                     <div className="task-meta">
-                      <span>{task.status}</span>
+                      <select className="status-select" aria-label={`Status for ${task.title}`} value={task.status} disabled={role === 'staff' && task.assigneeId !== account?.user?.id} onChange={(event) => changeTaskStatus(task, event.target.value)}>
+                        {taskStatuses.map((status) => <option key={status}>{status}</option>)}
+                      </select>
                       <span>{task.dueDate ? `Due ${new Date(`${task.dueDate}T00:00:00`).toLocaleDateString()}` : 'No due date'}</span>
                     </div>
                   </article>
@@ -494,7 +540,7 @@ function App() {
 
           {currentView === 'clients' && (
             <div className="panel full-panel">
-              <SectionHeader eyebrow="CRM" title="Client management" action="Add client" onAction={() => createRecord('clients', 'client name')} />
+              <SectionHeader eyebrow="CRM" title="Client management" action="Add client" onAction={() => setModalType('clients')} />
               <div className="table-card">
                 <div className="table-header">
                   <span>Client</span>
@@ -517,8 +563,20 @@ function App() {
 
           {currentView === 'campaigns' && (
             <div className="panel full-panel">
-              <SectionHeader eyebrow="Marketing" title="Campaigns" />
-              <div className="empty-state">Campaign tracking will be available after its database and API module is connected.</div>
+              <SectionHeader eyebrow="Marketing" title="Campaigns" action="Create campaign" onAction={() => setModalType('campaigns')} />
+              <div className="campaign-grid">
+                {campaigns.map((campaign) => (
+                  <article className="campaign-card" key={campaign.id}>
+                    <div className="campaign-head"><span className="eyebrow">{campaign.campaignType || 'Campaign'}</span><select className="status-select" aria-label={`Status for ${campaign.name}`} value={campaign.status} onChange={(event) => changeCampaignStatus(campaign, event.target.value)}>{campaignStatuses.map((status) => <option key={status}>{status}</option>)}</select></div>
+                    <h3>{campaign.name}</h3>
+                    <p>{campaign.objective || 'No objective added yet.'}</p>
+                    <div className="campaign-meta"><span>{campaign.clientName || 'No client linked'}</span><span>{campaign.platforms?.length ? campaign.platforms.join(', ') : 'No platforms'}</span></div>
+                    <div className="campaign-foot"><span>Budget</span><strong>{Number(campaign.budget || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong></div>
+                    <small>{campaign.startDate ? new Date(`${campaign.startDate}T00:00:00`).toLocaleDateString() : 'No start date'}{campaign.endDate ? ` – ${new Date(`${campaign.endDate}T00:00:00`).toLocaleDateString()}` : ''}</small>
+                  </article>
+                ))}
+                {!campaigns.length && <div className="empty-state">{role === 'staff' ? 'Campaigns are available to workspace managers.' : 'No campaigns yet. Create a campaign to start tracking your marketing work.'}</div>}
+              </div>
             </div>
           )}
 
@@ -569,7 +627,30 @@ function App() {
           {currentView === 'notifications' && (
             <div className="panel full-panel">
               <SectionHeader eyebrow="Alerts" title="Notifications" />
-              <div className="empty-state">You are all caught up. Notifications will appear here when connected.</div>
+              <ul className="notification-list">
+                {notifications.map((notification) => (
+                  <li className={notification.readAt ? 'notification-read' : 'notification-unread'} key={notification.id}>
+                    <div><strong>{notification.title}</strong><p>{notification.message}</p><small>{new Date(notification.createdAt).toLocaleString()}</small></div>
+                    {!notification.readAt && <button type="button" className="sm-btn" onClick={() => markNotificationRead(notification)}>Mark read</button>}
+                  </li>
+                ))}
+                {!notifications.length && <li className="empty-state">You are all caught up. New workspace alerts will appear here.</li>}
+              </ul>
+            </div>
+          )}
+
+          {currentView === 'calendar' && (
+            <div className="panel full-panel">
+              <SectionHeader eyebrow="Schedule" title="Workspace calendar" action={role === 'staff' ? undefined : 'Schedule event'} onAction={() => setModalType('calendar')} />
+              <div className="calendar-list">
+                {calendarEvents.map((event) => (
+                  <article className="calendar-event" key={event.id}>
+                    <div className="calendar-date"><strong>{new Date(event.startsAt).toLocaleDateString(undefined, { day: '2-digit' })}</strong><span>{new Date(event.startsAt).toLocaleDateString(undefined, { month: 'short' })}</span></div>
+                    <div className="calendar-event-body"><div className="campaign-head"><h3>{event.title}</h3><span className="pill muted">{event.eventType}</span></div><p>{event.description || 'No additional details.'}</p><small>{new Date(event.startsAt).toLocaleString()}{event.endsAt ? ` – ${new Date(event.endsAt).toLocaleTimeString()}` : ''}{event.projectName ? ` · ${event.projectName}` : ''}{event.clientName ? ` · ${event.clientName}` : ''}</small></div>
+                  </article>
+                ))}
+                {!calendarEvents.length && <div className="empty-state">No events scheduled. Add a meeting or milestone to your workspace calendar.</div>}
+              </div>
             </div>
           )}
 
