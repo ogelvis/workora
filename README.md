@@ -34,35 +34,40 @@ Vite proxies `/api` requests to the API at `http://localhost:3001`. The API heal
 
 To use the local app, run `npm run dev:api` as well as `npm run dev`; the local API requires `DATABASE_URL` and `SESSION_SECRET` in an ignored `.env` file. Vercel's project environment variables are only injected into Vercel deployments, not into local Vite.
 
-## Backend included
+## What's included
 
-- Organization registration creates the business, initial owner, trial subscription, and audit event in a database transaction.
-- Passwords are hashed with bcrypt. Authentication uses random opaque session tokens stored only as HMAC hashes in PostgreSQL and sent in HttpOnly, SameSite cookies.
-- Every tenant resource query is scoped by the authenticated organization ID. Role checks are performed by the API; the client-side role display is not an authorization boundary.
-- Owners, admins, and managers can create clients, projects, tasks, campaigns, and calendar events. Only those roles can read all clients/projects/campaigns; staff task lists and notifications are limited to that user. Task assignees and project/client links are validated against the active tenant.
-- Members can update the status of their assigned tasks; managers can update any task in their organization. Campaign status is manager-controlled. Notification reads are scoped to the current member.
-- The schema includes organization membership, sessions, clients, projects, tasks, campaigns, calendar events, per-member notifications, audit events, and subscription-plan foundations.
-- Authentication endpoints are rate-limited, request bodies are validated, and cross-origin state-changing requests are rejected.
-- SQL migrations are applied once and recorded in `schema_migrations`; the migration runner applies numbered migration files in order.
+- **Accounts & teams**: registration creates the business, owner, 14-day Starter trial and a `#general` chat channel in one transaction. Owners and admins invite people with single-use links (7-day expiry), change roles, remove members and issue password-reset links (24-hour expiry). Everyone can change their password and sign out other sessions.
+- **Work**: projects (with client, status and task progress), tasks (assignee, priority, due date, board and list views, drag-and-drop status), clients, campaigns (budget, platforms, leads, conversions, revenue) and a month-view calendar. Everything can be created, edited and deleted.
+- **Collaboration**: company files organised by folder, an owners-and-admins-only Document Vault, team chat channels (refreshed every few seconds), and notifications for task assignment, task completion and new members.
+- **Company**: editable company profile, and a billing page showing plan, trial status and usage.
+- **Plan limits enforced**: members (including pending invites), projects and storage. An ended trial is shown but does not lock the workspace, because online payments are not connected yet.
+- **Security**: bcrypt password hashes, opaque session tokens stored as HMAC hashes in HttpOnly SameSite cookies, organisation-scoped queries everywhere, server-side role checks, rate-limited auth endpoints, validated request bodies and a same-origin check on state-changing requests. Downloads are served as attachments with a sandboxing CSP; only raster images can open inline.
+
+### Not connected yet
+
+- **Email delivery**: invitations and password resets produce links that an owner or admin shares themselves. "Forgot password?" explains this.
+- **Payments**: plans can't be purchased or changed in the app.
+- **File storage**: files are stored in PostgreSQL, up to 4 MB each, because Vercel functions accept request bodies of up to 4.5 MB. For larger files or heavy use, move storage to an object store such as Vercel Blob or S3.
+
+## Roles
+
+| Role | Can do |
+|---|---|
+| Owner | Everything, including inviting admins |
+| Admin | Team management, billing, Document Vault and all work |
+| Manager | Create, assign and edit projects, tasks, clients, campaigns, events and chat channels |
+| Staff | Their assigned tasks, files, chat, calendar and notifications |
 
 ## API routes
 
-- `POST /api/auth/register`
-- `POST /api/auth/login`
-- `POST /api/auth/logout`
-- `GET /api/auth/me`
-- `GET /api/dashboard`
-- `GET|POST /api/clients`
-- `GET|POST /api/projects`
-- `GET|POST /api/tasks`
-- `PATCH /api/tasks/:taskId`
-- `GET|POST /api/campaigns`
-- `PATCH /api/campaigns/:campaignId/status`
-- `GET|POST /api/calendar`
-- `GET /api/notifications`
-- `PATCH /api/notifications/:notificationId/read`
+- Auth: `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`, `POST /api/auth/change-password`, `GET /api/auth/sessions`, `POST /api/auth/sessions/revoke-others`, `GET /api/auth/invitations/:token`, `POST /api/auth/accept-invite`, `GET /api/auth/password-resets/:token`, `POST /api/auth/reset-password`
+- Work: `GET /api/dashboard`; `GET|POST /api/clients`, `PUT|DELETE /api/clients/:id`; `GET|POST /api/projects`, `PUT|DELETE /api/projects/:id`; `GET|POST /api/tasks`, `PUT|PATCH|DELETE /api/tasks/:id`; `GET|POST /api/campaigns`, `PUT|DELETE /api/campaigns/:id`, `PATCH /api/campaigns/:id/status`; `GET|POST /api/calendar`, `PUT|DELETE /api/calendar/:id`
+- Notifications: `GET /api/notifications`, `PATCH /api/notifications/:id/read`, `POST /api/notifications/read-all`
+- Team: `GET /api/members`, `PATCH|DELETE /api/members/:userId`, `POST /api/members/:userId/reset-link`, `GET|POST /api/invitations`, `DELETE /api/invitations/:id`, `GET|PUT /api/organization`, `GET /api/billing`
+- Files: `GET|POST /api/files`, `GET /api/files/:id/download`, `DELETE /api/files/:id`
+- Chat: `GET|POST /api/channels`, `DELETE /api/channels/:id`, `GET|POST /api/channels/:id/messages`
 
-The workspace UI now persists campaigns, calendar events, task status changes, and per-user notification reads through these API routes. The following are still not implemented: email verification/password-reset delivery, member invitations and team chat, object storage/file uploads and the document vault, payment processing, and platform super-admin actions. Configure and test the Neon database before relying on these migrations or API routes in production. External email, storage, and payment features need real providers before they can be enabled.
+Remember to run `npm run db:migrate` after pulling these changes; migration `003_team_files_chat_profile.sql` adds the new tables.
 
 ## Production
 
