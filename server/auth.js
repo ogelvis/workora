@@ -78,11 +78,11 @@ export async function requireAuth(request, response, next) {
               sub.status AS subscription_status
        FROM user_sessions s
        JOIN users u ON u.id = s.user_id
-       JOIN organization_members om ON om.user_id = u.id
-       JOIN organizations o ON o.id = om.organization_id
+       LEFT JOIN organization_members om ON om.user_id = u.id
+       LEFT JOIN organizations o ON o.id = om.organization_id
        LEFT JOIN subscriptions sub ON sub.organization_id = om.organization_id
        WHERE s.token_hash = $1 AND s.expires_at > now()
-       ORDER BY om.created_at ASC
+       ORDER BY om.created_at ASC NULLS LAST
        LIMIT 1`,
       [hashToken(token)],
     )
@@ -103,6 +103,14 @@ export async function requireAuth(request, response, next) {
       // still listed (removing it from PLATFORM_ADMIN_EMAILS revokes access immediately).
       platformAdmin: row.platform_admin && isPlatformAdmin(row.email),
       subscriptionStatus: row.subscription_status,
+    }
+    // The owner's console account needs no workspace; every other account does.
+    if (!row.organization_id && !request.auth.platformAdmin) {
+      return response.status(401).json({ error: 'Your session has expired. Please sign in again.' })
+    }
+    const consolePath = request.originalUrl.startsWith('/api/auth/') || request.originalUrl.startsWith('/api/admin/')
+    if (!row.organization_id && !consolePath) {
+      return response.status(403).json({ error: 'This account only has access to the owner console.' })
     }
     // A suspended workspace can still sign in and out (so the app can explain why),
     // but every workspace route is closed. Platform admins are never locked out.

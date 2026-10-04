@@ -30,6 +30,7 @@ async function readResponse(response) {
   if (!response.ok) {
     const error = new Error(payload.error || 'The request could not be completed.')
     error.status = response.status
+    error.code = payload.code
     throw error
   }
   return payload

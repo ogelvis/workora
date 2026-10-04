@@ -64,16 +64,25 @@ router.post('/register', authLimiter, route(async (request, response) => {
   const email = values.email.toLowerCase()
   const passwordHash = await bcrypt.hash(values.password, 12)
   const account = await withTransaction(async (client) => {
-    const existingUser = await client.query('SELECT id FROM users WHERE email = $1', [email])
-    if (existingUser.rowCount) throw new HttpError(409, 'An account with this email already exists.')
+    const existingUser = await client.query(
+      `SELECT u.id, u.password_hash, EXISTS (SELECT 1 FROM organization_members om WHERE om.user_id = u.id) AS has_workspace
+       FROM users u WHERE u.email = $1`,
+      [email],
+    )
+    const existing = existingUser.rows[0]
+    // The owner's console account has no workspace yet; it can create one with its own password.
+    const reuse = existing && !existing.has_workspace && await bcrypt.compare(values.password, existing.password_hash)
+    if (existing && !reuse) throw new HttpError(409, 'An account with this email already exists. Sign in instead.')
     const organization = await client.query(
       'INSERT INTO organizations (name, business_email) VALUES ($1, $2) RETURNING id, name',
       [values.organizationName, values.businessEmail.toLowerCase()],
     )
-    const user = await client.query(
-      'INSERT INTO users (full_name, email, password_hash) VALUES ($1, $2, $3) RETURNING id, full_name, email',
-      [values.fullName, email, passwordHash],
-    )
+    const user = reuse
+      ? await client.query('SELECT id, full_name, email FROM users WHERE id = $1', [existing.id])
+      : await client.query(
+        'INSERT INTO users (full_name, email, password_hash) VALUES ($1, $2, $3) RETURNING id, full_name, email',
+        [values.fullName, email, passwordHash],
+      )
     const organizationId = organization.rows[0].id
     const userId = user.rows[0].id
     await client.query(
@@ -108,16 +117,24 @@ router.post('/login', authLimiter, route(async (request, response) => {
     `SELECT u.id, u.full_name, u.email, u.password_hash, om.organization_id,
             o.name AS organization_name, om.role
      FROM users u
-     JOIN organization_members om ON om.user_id = u.id
-     JOIN organizations o ON o.id = om.organization_id
+     LEFT JOIN organization_members om ON om.user_id = u.id
+     LEFT JOIN organizations o ON o.id = om.organization_id
      WHERE u.email = $1
-     ORDER BY om.created_at ASC
+     ORDER BY om.created_at ASC NULLS LAST
      LIMIT 1`,
     [parsed.data.email.toLowerCase()],
   )
   const row = result.rows[0]
-  if (!row || !(await bcrypt.compare(parsed.data.password, row.password_hash))) {
-    return response.status(401).json({ error: 'Email or password is incorrect.' })
+  // Sign-up already reveals whether an email is taken, so naming the problem here
+  // costs nothing and saves people guessing.
+  if (!row) {
+    return response.status(401).json({ error: 'No Workora account uses this email. Check the spelling or create a workspace.', code: 'no_account' })
+  }
+  if (!(await bcrypt.compare(parsed.data.password, row.password_hash))) {
+    return response.status(401).json({ error: 'That password is incorrect. Ask your workspace admin for a reset link if you’ve forgotten it.', code: 'wrong_password' })
+  }
+  if (!row.organization_id) {
+    return response.status(401).json({ error: 'This account isn’t in a workspace yet. Create a workspace with the same email and password.', code: 'no_workspace' })
   }
   await createSession(row.id, response)
   const account = {
@@ -169,17 +186,59 @@ router.post('/console-login', authLimiter, route(async (request, response) => {
   }
   const result = await pool.query('SELECT id, password_hash FROM users WHERE email = $1', [email])
   const user = result.rows[0]
-  if (!user) return invalid('no Workora account uses this email yet; sign up on the homepage first')
+  if (!user) return invalid('no account uses this email yet; set up owner access first')
   if (!(await bcrypt.compare(parsed.data.password, user.password_hash))) return invalid('wrong password')
-  const member = await pool.query('SELECT 1 FROM organization_members WHERE user_id = $1', [user.id])
-  if (!member.rowCount) return invalid('this account does not belong to any workspace')
-  await createSession(user.id, response, { platformAdmin: true })
+  await startConsoleSession(user.id, email, 'signed in to the console', response)
+  return response.json({ ok: true })
+}))
+
+async function startConsoleSession(userId, email, action, response) {
+  await createSession(userId, response, { platformAdmin: true })
   await pool.query(
     `INSERT INTO admin_audit_log (admin_user_id, admin_email, action, target_type, target_name)
-     VALUES ($1, $2, 'signed in to the console', 'console', '')`,
-    [user.id, email],
+     VALUES ($1, $2, $3, 'console', '')`,
+    [userId, email, action],
   )
-  return response.json({ ok: true })
+}
+
+// Tells the private sign-in page which form to show. Only answers on the secret path.
+router.post('/console-status', gatewayLimiter, route(async (request, response) => {
+  const parsed = gatewaySchema.safeParse(request.body)
+  if (!parsed.success || !isGatewayPath(parsed.data.path)) return response.status(404).json({ error: 'Not found.' })
+  const emails = platformAdminEmails()
+  if (!emails.length) return response.json({ configured: false, setupNeeded: false })
+  const existing = await pool.query('SELECT 1 FROM users WHERE email = ANY($1::text[]) LIMIT 1', [emails])
+  return response.json({ configured: true, setupNeeded: !existing.rowCount })
+}))
+
+const consoleSetupSchema = z.object({
+  fullName: z.string().trim().min(2).max(120),
+  email: emailSchema,
+  password: passwordSchema,
+}).extend(gatewaySchema.shape)
+
+// First-time owner setup: an address in PLATFORM_ADMIN_EMAILS that has no account yet
+// chooses its password here. Once the account exists this always refuses, so it can't
+// be used to take over the owner's access.
+router.post('/console-setup', authLimiter, route(async (request, response) => {
+  const parsed = consoleSetupSchema.safeParse(request.body)
+  if (!parsed.success) return validationError(response, parsed.error)
+  if (!isGatewayPath(parsed.data.path)) return response.status(404).json({ error: 'Not found.' })
+  const email = parsed.data.email.toLowerCase()
+  if (!isPlatformAdmin(email)) {
+    return response.status(403).json({ error: 'This email isn’t an owner address. Use the email set in PLATFORM_ADMIN_EMAILS.' })
+  }
+  const existing = await pool.query('SELECT 1 FROM users WHERE email = $1', [email])
+  if (existing.rowCount) {
+    return response.status(409).json({ error: 'Owner access is already set up for this email. Sign in instead.', code: 'exists' })
+  }
+  const passwordHash = await bcrypt.hash(parsed.data.password, 12)
+  const user = await pool.query(
+    'INSERT INTO users (full_name, email, password_hash) VALUES ($1, $2, $3) RETURNING id',
+    [parsed.data.fullName, email, passwordHash],
+  )
+  await startConsoleSession(user.rows[0].id, email, 'set up owner access', response)
+  return response.status(201).json({ ok: true })
 }))
 
 router.post('/logout', route(async (request, response) => {
@@ -213,7 +272,7 @@ router.post('/change-password', requireAuth, authLimiter, route(async (request, 
   await withTransaction(async (client) => {
     await client.query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, request.auth.userId])
     await client.query('DELETE FROM user_sessions WHERE user_id = $1 AND id != $2', [request.auth.userId, request.auth.sessionId])
-    await logActivity(client, request.auth, 'changed their password', 'user', request.auth.fullName)
+    if (request.auth.organizationId) await logActivity(client, request.auth, 'changed their password', 'user', request.auth.fullName)
   })
   return response.json({ ok: true })
 }))
