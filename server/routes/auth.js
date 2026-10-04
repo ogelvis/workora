@@ -3,7 +3,7 @@ import express from 'express'
 import rateLimit from 'express-rate-limit'
 import { z } from 'zod'
 import { pool } from '../db.js'
-import { createSession, destroySession, hashToken, requireAuth } from '../auth.js'
+import { adminPath, createSession, destroySession, hashToken, isPlatformAdmin, requireAuth } from '../auth.js'
 import {
   HttpError, emailSchema, getSubscription, logActivity, notify, passwordSchema, route,
   validationError, withTransaction,
@@ -128,6 +128,51 @@ router.post('/login', authLimiter, route(async (request, response) => {
   return response.json(accountPayload(account))
 }))
 
+// ---------------------------------------------------------------- Owner's private sign-in
+
+const gatewaySchema = z.object({ path: z.string().max(100) })
+
+function isGatewayPath(path) {
+  const secret = adminPath()
+  return Boolean(secret) && typeof path === 'string' && path.replace(/^\/+|\/+$/g, '').toLowerCase() === secret.toLowerCase()
+}
+
+// Lets the app ask whether an address is the private sign-in, without the path ever
+// being shipped to browsers. Rate-limited so it cannot be used to guess the path.
+const gatewayLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'Not found.' },
+})
+
+router.get('/gateway/:path', gatewayLimiter, (request, response) => {
+  return isGatewayPath(request.params.path)
+    ? response.status(204).end()
+    : response.status(404).json({ error: 'Not found.' })
+})
+
+router.post('/console-login', authLimiter, route(async (request, response) => {
+  const parsed = loginSchema.extend(gatewaySchema.shape).safeParse(request.body)
+  const invalid = () => response.status(401).json({ error: 'Email or password is incorrect.' })
+  if (!parsed.success || !isGatewayPath(parsed.data.path)) return invalid()
+  const email = parsed.data.email.toLowerCase()
+  if (!isPlatformAdmin(email)) return invalid()
+  const result = await pool.query('SELECT id, password_hash FROM users WHERE email = $1', [email])
+  const user = result.rows[0]
+  if (!user || !(await bcrypt.compare(parsed.data.password, user.password_hash))) return invalid()
+  const member = await pool.query('SELECT 1 FROM organization_members WHERE user_id = $1', [user.id])
+  if (!member.rowCount) return invalid()
+  await createSession(user.id, response, { platformAdmin: true })
+  await pool.query(
+    `INSERT INTO admin_audit_log (admin_user_id, admin_email, action, target_type, target_name)
+     VALUES ($1, $2, 'signed in to the console', 'console', '')`,
+    [user.id, email],
+  )
+  return response.json({ ok: true })
+}))
+
 router.post('/logout', route(async (request, response) => {
   await destroySession(request, response)
   return response.status(204).end()
@@ -137,11 +182,13 @@ router.get('/me', requireAuth, route(async (request, response) => {
   const subscription = await getSubscription(pool, request.auth.organizationId)
   return response.json({
     ...accountPayload(request.auth),
+    platformAdmin: request.auth.platformAdmin,
     subscription: subscription && {
       plan: subscription.plan_name,
       status: subscription.status,
       trialEndsAt: subscription.trial_ends_at,
       trialExpired: subscription.trialExpired,
+      currentPeriodEnd: subscription.current_period_end,
     },
   })
 }))

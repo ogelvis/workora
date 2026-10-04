@@ -7,6 +7,7 @@ import express from 'express'
 import helmet from 'helmet'
 import cookieParser from 'cookie-parser'
 import { pool } from './db.js'
+import adminRoutes, { publicRouter as publicRoutes } from './routes/admin.js'
 import authRoutes from './routes/auth.js'
 import chatRoutes from './routes/chat.js'
 import fileRoutes from './routes/files.js'
@@ -25,7 +26,7 @@ const app = express()
 const isProduction = process.env.NODE_ENV === 'production'
 const rootDir = path.dirname(fileURLToPath(import.meta.url))
 const migrationsDir = path.join(rootDir, 'db', 'migrations')
-const LATEST_MIGRATION = '003_team_files_chat_profile.sql'
+const LATEST_MIGRATION = '006_admin_sessions.sql'
 
 app.disable('x-powered-by')
 app.set('trust proxy', 1)
@@ -64,6 +65,8 @@ app.get('/api/health', async (_request, response, next) => {
 })
 
 app.use('/api/auth', authRoutes)
+app.use('/api', publicRoutes)
+app.use('/api/admin', adminRoutes)
 app.use('/api', workspaceRoutes)
 app.use('/api', teamRoutes)
 app.use('/api', fileRoutes)

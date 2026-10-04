@@ -5,7 +5,7 @@ import { RecordForm } from '../components/RecordForms.jsx'
 import { recordTypes } from '../lib/constants.js'
 import { api } from '../lib/api.js'
 import { capitalize, slug } from '../lib/format.js'
-import { ADMIN_ROLES, MANAGER_ROLES, WorkspaceContext, allowedViews, navigation, readHash } from './context.js'
+import { ADMIN_ROLES, MANAGER_ROLES, WorkspaceContext, allowedViews, canSee, navigation, readHash } from './context.js'
 import Overview from './views/Overview.jsx'
 import Projects from './views/Projects.jsx'
 import Tasks from './views/Tasks.jsx'
@@ -43,13 +43,14 @@ const loaders = {
   events: { path: '/api/calendar', pick: (data) => data.events },
   notifications: { path: '/api/notifications', pick: (data) => data.notifications },
   members: { path: '/api/members', pick: (data) => data.members },
+  dms: { path: '/api/dms', pick: (data) => data.conversations },
 }
 
 function Workspace({ account, setAccount, onSignedOut }) {
   const role = account.role
   const toast = useToast()
   const [route, setRoute] = useState(readHash)
-  const [data, setData] = useState({ clients: [], projects: [], tasks: [], campaigns: [], events: [], notifications: [], members: [] })
+  const [data, setData] = useState({ clients: [], projects: [], tasks: [], campaigns: [], events: [], notifications: [], members: [], dms: [] })
   const [loaded, setLoaded] = useState(false)
   const [form, setForm] = useState(null)
   const [confirm, setConfirm] = useState(null)
@@ -100,7 +101,7 @@ function Workspace({ account, setAccount, onSignedOut }) {
   // Keep the notification badge fresh without a full reload.
   useEffect(() => {
     const timer = setInterval(() => {
-      if (document.visibilityState === 'visible') reload(['notifications'])
+      if (document.visibilityState === 'visible') reload(['notifications', 'dms'])
     }, 30_000)
     return () => clearInterval(timer)
   }, [reload])
@@ -155,6 +156,7 @@ function Workspace({ account, setAccount, onSignedOut }) {
     projects: data.projects.filter((project) => !['Completed', 'Cancelled'].includes(project.status)).length,
     tasks: data.tasks.filter((task) => task.status !== 'Completed' && (MANAGER_ROLES.includes(role) ? task.assigneeId === account.user.id : true)).length,
     notifications: unread,
+    chat: data.dms.reduce((sum, conversation) => sum + conversation.unread, 0),
   }
 
   const context = {
@@ -177,7 +179,7 @@ function Workspace({ account, setAccount, onSignedOut }) {
           </div>
           <nav className="ws-nav">
             {navigation.map((group) => {
-              const items = group.items.filter((item) => !item.roles || item.roles.includes(role))
+              const items = group.items.filter((item) => canSee(item, role))
               if (!items.length) return null
               return (
                 <div key={group.section} className="ws-nav-group">
@@ -186,7 +188,7 @@ function Workspace({ account, setAccount, onSignedOut }) {
                     <a key={item.key} href={`#/${item.key}`} className={view === item.key ? 'active' : ''} aria-current={view === item.key ? 'page' : undefined}>
                       <Icon name={item.icon} size={17} />
                       <span>{item.label}</span>
-                      {counts[item.key] > 0 && <em className={item.key === 'notifications' ? 'dot-count' : ''}>{counts[item.key]}</em>}
+                      {counts[item.key] > 0 && <em className={['notifications', 'chat'].includes(item.key) ? 'dot-count' : ''}>{counts[item.key]}</em>}
                     </a>
                   ))}
                 </div>

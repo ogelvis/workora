@@ -30,8 +30,12 @@ export const navigation = [
   ] },
 ]
 
+export function canSee(item, role) {
+  return !item.roles || item.roles.includes(role)
+}
+
 export function allowedViews(role) {
-  return navigation.flatMap((group) => group.items).filter((item) => !item.roles || item.roles.includes(role))
+  return navigation.flatMap((group) => group.items).filter((item) => canSee(item, role))
 }
 
 export function readHash() {

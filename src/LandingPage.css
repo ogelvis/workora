@@ -399,6 +399,12 @@
 .lp-plan-featured h3 { color: #fff; }
 .lp-plan > p { color: #7c8881; font-size: 0.72rem; margin: 0 0 20px; }
 .lp-plan-featured > p { color: #b0c2c2; }
+.lp-plan-price { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; margin: 4px 0 12px; }
+.lp-plan-price strong { color: #1d3027; font-size: 1.6rem; font-weight: 750; letter-spacing: -0.04em; }
+.lp-plan-price span { color: #6b7a71; font-size: 0.72rem; font-weight: 600; }
+.lp-plan-price small { color: #84928a; flex-basis: 100%; font-size: 0.64rem; }
+.lp-plan-featured .lp-plan-price strong { color: #fff; }
+.lp-plan-featured .lp-plan-price span, .lp-plan-featured .lp-plan-price small { color: #a9bccb; }
 .lp-plan-feature { color: #5c6c62; font-size: 0.68rem; margin: 11px 0; }
 .lp-plan-feature span { color: #33855d; font-weight: 900; margin-right: 6px; }
 .lp-plan-featured .lp-plan-feature { color: #d0dfdb; }

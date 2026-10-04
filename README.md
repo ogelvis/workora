@@ -40,7 +40,7 @@ To use the local app, run `npm run dev:api` as well as `npm run dev`; the local 
 - **Work**: projects (with client, status and task progress), tasks (assignee, priority, due date, board and list views, drag-and-drop status), clients, campaigns (budget, platforms, leads, conversions, revenue) and a month-view calendar. Everything can be created, edited and deleted.
 - **Collaboration**: company files organised by folder, an owners-and-admins-only Document Vault, team chat channels (refreshed every few seconds), and notifications for task assignment, task completion and new members.
 - **Company**: editable company profile, and a billing page showing plan, trial status and usage.
-- **Plan limits enforced**: members (including pending invites), projects and storage. An ended trial is shown but does not lock the workspace, because online payments are not connected yet.
+- **Plan limits enforced**: members (including pending invites), projects and storage. Storage is a hard ceiling to the byte: an upload that would go over the plan's limit is refused, concurrent uploads are serialised so they cannot overshoot together, and a workspace over its limit after a downgrade cannot upload until it deletes files or upgrades. An ended trial is shown but does not lock the workspace, because online payments are not connected yet.
 - **Security**: bcrypt password hashes, opaque session tokens stored as HMAC hashes in HttpOnly SameSite cookies, organisation-scoped queries everywhere, server-side role checks, rate-limited auth endpoints, validated request bodies and a same-origin check on state-changing requests. Downloads are served as attachments with a sandboxing CSP; only raster images can open inline.
 
 ### Not connected yet
@@ -48,6 +48,18 @@ To use the local app, run `npm run dev:api` as well as `npm run dev`; the local 
 - **Email delivery**: invitations and password resets produce links that an owner or admin shares themselves. "Forgot password?" explains this.
 - **Payments**: plans can't be purchased or changed in the app.
 - **File storage**: files are stored in PostgreSQL, up to 4 MB each, because Vercel functions accept request bodies of up to 4.5 MB. For larger files or heavy use, move storage to an object store such as Vercel Blob or S3.
+
+## Super admin (platform owner)
+
+The owner's control console has its own private sign-in at a secret address. Set these in Vercel's Environment Variables (Production) and redeploy:
+
+- `ADMIN_PATH`: the secret address, for example `MaryNgaji` gives `https://your-domain/MaryNgaji`. 6–64 letters, numbers, `-` or `_`. Without it the console is switched off. The path is checked on the server only and never appears in the public JavaScript.
+- `PLATFORM_ADMIN_EMAILS`: comma-separated emails allowed to sign in there. They must also have a normal Workora account.
+- `SUPPORT_EMAIL`: where customers' upgrade requests go (shown on the Billing page).
+
+Only sessions started through the secret address get console access, and they last 12 hours. Signing in on the normal page with an owner email opens that person's workspace only. Any other address shows the homepage, and checks of the secret address are rate-limited. The console has an overview (sign-ups, paying workspaces, monthly recurring revenue), workspace search with plan, payment ("paid until"), trial, suspension and deletion controls, user lookup with password-reset links, plan prices and limits, and an audit log of every admin action. Suspended workspaces are locked out until reactivated.
+
+Plan prices live in the database (`subscription_plans`) and appear on the landing page and Billing page. Migration `004_platform_admin_pricing.sql` seeds the suggested launch prices; change them any time under **Super admin → Plans & pricing**.
 
 ## Roles
 
@@ -64,10 +76,13 @@ To use the local app, run `npm run dev:api` as well as `npm run dev`; the local 
 - Work: `GET /api/dashboard`; `GET|POST /api/clients`, `PUT|DELETE /api/clients/:id`; `GET|POST /api/projects`, `PUT|DELETE /api/projects/:id`; `GET|POST /api/tasks`, `PUT|PATCH|DELETE /api/tasks/:id`; `GET|POST /api/campaigns`, `PUT|DELETE /api/campaigns/:id`, `PATCH /api/campaigns/:id/status`; `GET|POST /api/calendar`, `PUT|DELETE /api/calendar/:id`
 - Notifications: `GET /api/notifications`, `PATCH /api/notifications/:id/read`, `POST /api/notifications/read-all`
 - Team: `GET /api/members`, `PATCH|DELETE /api/members/:userId`, `POST /api/members/:userId/reset-link`, `GET|POST /api/invitations`, `DELETE /api/invitations/:id`, `GET|PUT /api/organization`, `GET /api/billing`
+- Public: `GET /api/plans`
+- Owner sign-in: `GET /api/auth/gateway/:path`, `POST /api/auth/console-login`
+- Super admin (console sessions only): `GET /api/admin/overview`, `GET /api/admin/organizations`, `GET /api/admin/organizations/:id`, `PUT /api/admin/organizations/:id/subscription`, `DELETE /api/admin/organizations/:id`, `GET /api/admin/users`, `POST /api/admin/users/:id/reset-link`, `GET /api/admin/plans`, `PUT /api/admin/plans/:name`, `GET /api/admin/audit`
 - Files: `GET|POST /api/files`, `GET /api/files/:id/download`, `DELETE /api/files/:id`
-- Chat: `GET|POST /api/channels`, `DELETE /api/channels/:id`, `GET|POST /api/channels/:id/messages`
+- Chat: `GET|POST /api/channels`, `DELETE /api/channels/:id`, `GET|POST /api/channels/:id/messages`; private direct messages: `GET|POST /api/dms`, `GET|POST /api/dms/:id/messages` (only the two participants can read them)
 
-Remember to run `npm run db:migrate` after pulling these changes; migration `003_team_files_chat_profile.sql` adds the new tables.
+Remember to run `npm run db:migrate` after pulling these changes; migrations `003`–`006` add the new tables.
 
 ## Production
 

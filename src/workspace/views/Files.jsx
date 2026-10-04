@@ -18,13 +18,12 @@ function fileKind(file) {
 }
 
 function Files({ vault }) {
-  const { account, data, isManager, isAdmin, reload, confirm, toast, search } = useWorkspace()
-  const [state, setState] = useState({ files: [], folders: [], maxFileBytes: 4 * 1024 * 1024 })
+  const { account, isManager, isAdmin, reload, confirm, toast, search } = useWorkspace()
+  const [state, setState] = useState({ files: [], folders: [], maxFileBytes: 4 * 1024 * 1024, storage: null })
   const [folder, setFolder] = useState('')
   const [uploading, setUploading] = useState(null)
   const [dragging, setDragging] = useState(false)
   const input = useRef(null)
-  const stats = data.dashboard?.stats || {}
 
   const load = useCallback(async () => {
     const result = await api(`/api/files?vault=${vault ? 1 : 0}`)
@@ -35,19 +34,31 @@ function Files({ vault }) {
     load().catch((error) => toast(error.message, 'error'))
   }, [load, toast])
 
+  const storage = state.storage
+  const full = Boolean(storage && storage.usedBytes >= storage.limitBytes)
+
   async function upload(fileList) {
     const files = [...fileList]
     if (!files.length) return
     const target = folder || state.folders[state.folders.length - 1]?.name
     let done = 0
+    // Mirror the server's hard limit so people learn before uploading; the server still decides.
+    let remaining = state.storage ? state.storage.limitBytes - state.storage.usedBytes : Infinity
     for (const file of files) {
       if (file.size > state.maxFileBytes) {
         toast(`${file.name} is larger than ${formatBytes(state.maxFileBytes)}.`, 'error')
         continue
       }
+      if (file.size > remaining) {
+        toast(remaining <= 0
+          ? 'Your storage is full. Delete files or upgrade your plan to upload more.'
+          : `${file.name} (${formatBytes(file.size)}) doesn’t fit: ${formatBytes(remaining)} left on your plan.`, 'error')
+        continue
+      }
       setUploading(`Uploading ${file.name}…`)
       try {
         await uploadFile(file, { folder: target, vault })
+        remaining -= file.size
         done += 1
       } catch (error) {
         toast(`${file.name}: ${error.message}`, 'error')
@@ -95,10 +106,18 @@ function Files({ vault }) {
       >
         {vault && <span className="vault-badge"><Icon name="shield" size={15} /> Owners & admins only</span>}
         <input ref={input} type="file" multiple hidden onChange={(event) => upload(event.target.files)} />
-        <Button variant="primary" icon="upload" onClick={() => input.current?.click()} disabled={Boolean(uploading)}>
+        <Button variant="primary" icon="upload" onClick={() => input.current?.click()} disabled={Boolean(uploading) || full}>
           {uploading ? 'Uploading…' : folder ? `Upload to ${folder}` : 'Upload'}
         </Button>
       </PageHeader>
+
+      {full && (
+        <div className="storage-full">
+          <Icon name="alert" size={16} />
+          <span>Your plan’s storage is full ({formatBytes(storage.usedBytes)} of {formatBytes(storage.limitBytes)}). Delete files or upgrade your plan to upload more.</span>
+          {isAdmin && <a href="#/billing">View plans</a>}
+        </div>
+      )}
 
       <div className="folder-row">
         <button type="button" className={`folder${!folder ? ' active' : ''}`} onClick={() => setFolder('')}>
@@ -150,13 +169,16 @@ function Files({ vault }) {
         </button>
       )}
 
-      {!vault && (
+      {storage && (
         <div className="storage-row">
           <div>
-            <span className="eyebrow">Storage</span>
-            <strong>{formatBytes(stats.storageUsedBytes)} <span>of {formatBytes(stats.storageLimitBytes)}</span></strong>
+            <span className="eyebrow">Storage{vault ? ' (shared with Files)' : ''}</span>
+            <strong>{formatBytes(storage.usedBytes)} <span>of {formatBytes(storage.limitBytes)}</span></strong>
           </div>
-          <Meter value={stats.storageUsedBytes || 0} max={stats.storageLimitBytes || 1} />
+          <Meter value={storage.usedBytes} max={storage.limitBytes || 1} />
+          <span className={`storage-left${full ? ' full' : ''}`}>
+            {full ? 'Full' : `${formatBytes(storage.limitBytes - storage.usedBytes)} left`}
+          </span>
         </div>
       )}
       {dragging && <div className="drop-overlay"><Icon name="upload" size={28} />Drop to upload{folder ? ` to ${folder}` : ''}</div>}

@@ -212,8 +212,9 @@ router.get('/billing', adminsOnly, route(async (request, response) => {
   const [subscription, plans, usage] = await Promise.all([
     getSubscription(pool, organizationId),
     pool.query(
-      `SELECT name, user_limit AS "userLimit", storage_limit_bytes::float AS "storageLimitBytes", project_limit AS "projectLimit"
-       FROM subscription_plans WHERE active ORDER BY user_limit`,
+      `SELECT name, user_limit AS "userLimit", storage_limit_bytes::float AS "storageLimitBytes", project_limit AS "projectLimit",
+              monthly_price::float AS "monthlyPrice", yearly_price::float AS "yearlyPrice", currency
+       FROM subscription_plans WHERE active ORDER BY sort_order, user_limit`,
     ),
     pool.query(
       `SELECT (SELECT count(*)::int FROM organization_members WHERE organization_id = $1) AS members,
@@ -232,10 +233,12 @@ router.get('/billing', adminsOnly, route(async (request, response) => {
       userLimit: subscription.user_limit,
       storageLimitBytes: Number(subscription.storage_limit_bytes),
       projectLimit: subscription.project_limit,
+      currentPeriodEnd: subscription.current_period_end,
     },
     usage: usage.rows[0],
     plans: plans.rows,
     paymentsEnabled: false,
+    supportEmail: process.env.SUPPORT_EMAIL || null,
   })
 }))
 

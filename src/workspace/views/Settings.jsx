@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import Icon from '../../components/Icon.jsx'
-import { Avatar, Button, Field, Menu, Modal, PageHeader, Pill, Segmented, copyText } from '../../components/ui.jsx'
+import { Avatar, Button, Field, IconButton, Menu, Modal, PageHeader, Pill, Segmented, copyText } from '../../components/ui.jsx'
 import { api } from '../../lib/api.js'
 import { capitalize, formatDateTime, timeAgo } from '../../lib/format.js'
 import { useWorkspace } from '../context.js'
@@ -102,7 +102,7 @@ function InviteForm({ role, onInvited }) {
 }
 
 function Team() {
-  const { account, role, isAdmin, reload, data, confirm, toast } = useWorkspace()
+  const { account, role, isAdmin, reload, data, confirm, toast, navigate } = useWorkspace()
   const [invitations, setInvitations] = useState([])
   const [link, setLink] = useState(null)
 
@@ -219,6 +219,7 @@ function Team() {
                 <td>{member.openTasks}</td>
                 <td className="muted">{timeAgo(member.joinedAt)}</td>
                 <td className="cell-actions">
+                  {member.id !== account.user.id && <IconButton icon="chat" label={`Message ${member.fullName}`} onClick={() => navigate('chat', { dm: member.id })} />}
                   {canManage(member) && <Menu items={[
                     { label: 'Create password reset link', icon: 'key', onSelect: () => resetLink(member) },
                     { label: 'Remove from workspace', icon: 'trash', danger: true, onSelect: () => removeMember(member) },

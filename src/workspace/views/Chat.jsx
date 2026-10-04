@@ -50,29 +50,84 @@ function NewChannel({ onClose, onCreated }) {
   )
 }
 
+function NewMessage({ members, me, onClose, onPick }) {
+  const [query, setQuery] = useState('')
+  const people = members
+    .filter((member) => member.id !== me)
+    .filter((member) => `${member.fullName} ${member.email}`.toLowerCase().includes(query.trim().toLowerCase()))
+  return (
+    <Modal title="New message" eyebrow="Direct message" onClose={onClose} width={460}>
+      <div className="modal-body">
+        <label className="ws-search dm-search">
+          <Icon name="search" size={16} />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search teammates…" aria-label="Search teammates" />
+        </label>
+        <ul className="dm-picker">
+          {people.map((member) => (
+            <li key={member.id}>
+              <button type="button" onClick={() => onPick(member)}>
+                <Avatar name={member.fullName} size="sm" />
+                <span><strong>{member.fullName}</strong><small>{member.email}</small></span>
+                <em>{member.role}</em>
+              </button>
+            </li>
+          ))}
+          {!people.length && <li className="muted-note">{members.length > 1 ? 'No teammates match.' : 'Invite teammates from Settings → Team to start a conversation.'}</li>}
+        </ul>
+      </div>
+    </Modal>
+  )
+}
+
 function Chat() {
-  const { account, isManager, toast, confirm, data } = useWorkspace()
+  const { account, isManager, toast, confirm, data, reload, params } = useWorkspace()
+  const me = account.user.id
   const [channels, setChannels] = useState([])
-  const [activeId, setActiveId] = useState(null)
+  const [conversations, setConversations] = useState([])
+  const [active, setActive] = useState(null) // { kind: 'channel' | 'dm', id }
   const [messages, setMessages] = useState([])
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [picking, setPicking] = useState(false)
   const scroller = useRef(null)
   const stickToBottom = useRef(true)
-  const active = channels.find((channel) => channel.id === activeId)
+
+  const channel = active?.kind === 'channel' ? channels.find((item) => item.id === active.id) : null
+  const conversation = active?.kind === 'dm' ? conversations.find((item) => item.id === active.id) : null
+  const base = active ? (active.kind === 'channel' ? `/api/channels/${active.id}` : `/api/dms/${active.id}`) : null
+
+  const loadConversations = useCallback(async () => {
+    const result = await api('/api/dms')
+    setConversations(result.conversations)
+  }, [])
 
   useEffect(() => {
-    api('/api/channels')
-      .then((result) => {
+    Promise.all([api('/api/channels'), loadConversations()])
+      .then(([result]) => {
         setChannels(result.channels)
-        setActiveId((current) => current || result.channels[0]?.id || null)
+        setActive((current) => current || (result.channels[0] ? { kind: 'channel', id: result.channels[0].id } : null))
       })
       .catch((error) => toast(error.message, 'error'))
-  }, [toast])
+  }, [toast, loadConversations])
 
-  const loadMessages = useCallback(async (channelId) => {
-    const result = await api(`/api/channels/${channelId}/messages`)
+  const openDirect = useCallback(async (userId) => {
+    try {
+      const result = await api('/api/dms', { method: 'POST', body: { userId } })
+      await loadConversations()
+      setActive({ kind: 'dm', id: result.conversation.id })
+    } catch (error) {
+      toast(error.message, 'error')
+    }
+  }, [loadConversations, toast])
+
+  // Deep link from elsewhere in the app: #/chat?dm=<userId>
+  useEffect(() => {
+    if (params.dm && params.dm !== me) openDirect(params.dm)
+  }, [params.dm, me, openDirect])
+
+  const loadMessages = useCallback(async (path) => {
+    const result = await api(`${path}/messages`)
     setMessages((current) => {
       const same = current.length === result.messages.length && current.at(-1)?.id === result.messages.at(-1)?.id
       return same ? current : result.messages
@@ -80,15 +135,18 @@ function Chat() {
   }, [])
 
   useEffect(() => {
-    if (!activeId) return undefined
+    if (!base) return undefined
     setMessages([])
     stickToBottom.current = true
-    loadMessages(activeId).catch((error) => toast(error.message, 'error'))
+    // Opening a DM marks it read on the server, so refresh the unread counts afterwards.
+    loadMessages(base).then(() => loadConversations()).then(() => reload(['dms'])).catch((error) => toast(error.message, 'error'))
     const timer = setInterval(() => {
-      if (document.visibilityState === 'visible') loadMessages(activeId).catch(() => {})
+      if (document.visibilityState !== 'visible') return
+      loadMessages(base).catch(() => {})
+      loadConversations().catch(() => {})
     }, POLL_MS)
     return () => clearInterval(timer)
-  }, [activeId, loadMessages, toast])
+  }, [base, loadMessages, loadConversations, reload, toast])
 
   useLayoutEffect(() => {
     const element = scroller.current
@@ -98,13 +156,14 @@ function Chat() {
   async function send(event) {
     event.preventDefault()
     const body = draft.trim()
-    if (!body || !activeId) return
+    if (!body || !base) return
     setSending(true)
     try {
-      const result = await api(`/api/channels/${activeId}/messages`, { method: 'POST', body: { body } })
+      const result = await api(`${base}/messages`, { method: 'POST', body: { body } })
       stickToBottom.current = true
       setMessages((current) => [...current, result.message])
       setDraft('')
+      if (active.kind === 'dm') loadConversations().catch(() => {})
     } catch (error) {
       toast(error.message, 'error')
     } finally {
@@ -112,15 +171,15 @@ function Chat() {
     }
   }
 
-  function deleteChannel(channel) {
+  function deleteChannel(item) {
     confirm({
-      title: `Delete #${channel.name}?`,
+      title: `Delete #${item.name}?`,
       message: 'The channel and all of its messages will be permanently deleted.',
       onConfirm: async () => {
-        await api(`/api/channels/${channel.id}`, { method: 'DELETE' })
-        const rest = channels.filter((item) => item.id !== channel.id)
+        await api(`/api/channels/${item.id}`, { method: 'DELETE' })
+        const rest = channels.filter((entry) => entry.id !== item.id)
         setChannels(rest)
-        setActiveId(rest[0]?.id || null)
+        setActive(rest[0] ? { kind: 'channel', id: rest[0].id } : null)
         toast('Channel deleted')
       },
     })
@@ -136,6 +195,10 @@ function Chat() {
     return { message, day, newDay, grouped }
   }), [messages])
 
+  const title = channel ? channel.name : conversation ? conversation.userName : '…'
+  const placeholder = channel ? `Message #${channel.name}` : conversation ? `Message ${conversation.userName}` : 'Select a conversation'
+  const dmClosed = conversation && !conversation.isMember
+
   return (
     <div className="chat">
       <aside className="chat-channels">
@@ -144,27 +207,44 @@ function Chat() {
           {isManager && <IconButton icon="plus" label="New channel" onClick={() => setCreating(true)} />}
         </div>
         <ul>
-          {channels.map((channel) => (
-            <li key={channel.id}>
-              <button type="button" className={channel.id === activeId ? 'active' : ''} onClick={() => setActiveId(channel.id)}>
-                <Icon name="hash" size={15} />{channel.name}
+          {channels.map((item) => (
+            <li key={item.id}>
+              <button type="button" className={active?.kind === 'channel' && item.id === active.id ? 'active' : ''} onClick={() => setActive({ kind: 'channel', id: item.id })}>
+                <Icon name="hash" size={15} />{item.name}
               </button>
             </li>
           ))}
         </ul>
-        <div className="chat-members">
-          <span className="eyebrow">{data.members.length} {data.members.length === 1 ? 'member' : 'members'}</span>
-          <div className="avatar-stack">{data.members.slice(0, 6).map((member) => <Avatar key={member.id} name={member.fullName} size="sm" />)}</div>
+        <div className="chat-channels-head dm-head">
+          <span className="eyebrow">Direct messages</span>
+          <IconButton icon="plus" label="New direct message" onClick={() => setPicking(true)} />
         </div>
+        <ul className="dm-list">
+          {conversations.map((item) => (
+            <li key={item.id}>
+              <button type="button" className={`${active?.kind === 'dm' && item.id === active.id ? 'active' : ''}${item.unread ? ' has-unread' : ''}`} onClick={() => setActive({ kind: 'dm', id: item.id })}>
+                <Avatar name={item.userName} size="xs" />
+                <span>{item.userName}</span>
+                {item.unread > 0 && <em>{item.unread}</em>}
+              </button>
+            </li>
+          ))}
+          {!conversations.length && (
+            <li><button type="button" className="dm-start" onClick={() => setPicking(true)}><Icon name="plus" size={14} />Message a teammate</button></li>
+          )}
+        </ul>
       </aside>
 
       <section className="chat-main">
         <header className="chat-head">
           <div>
-            <h2><Icon name="hash" size={17} />{active?.name || '…'}</h2>
-            {active?.description && <p>{active.description}</p>}
+            {conversation ? (
+              <h2 className="dm-title"><Avatar name={conversation.userName} size="sm" />{title}</h2>
+            ) : <h2><Icon name="hash" size={17} />{title}</h2>}
+            {channel?.description && <p>{channel.description}</p>}
+            {conversation && <p><Icon name="vault" size={12} /> Private — only you and {conversation.userName.split(' ')[0]} can see this conversation.</p>}
           </div>
-          {isManager && active && active.name !== 'general' && <IconButton icon="trash" label={`Delete #${active.name}`} onClick={() => deleteChannel(active)} />}
+          {isManager && channel && channel.name !== 'general' && <IconButton icon="trash" label={`Delete #${channel.name}`} onClick={() => deleteChannel(channel)} />}
         </header>
         <div
           className="chat-messages"
@@ -174,15 +254,15 @@ function Chat() {
             stickToBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80
           }}
         >
-          {!messages.length && active && (
+          {!messages.length && (channel || conversation) && (
             <div className="chat-empty">
-              <span className="empty-icon"><Icon name="chat" size={22} /></span>
-              <strong>This is the start of #{active.name}</strong>
-              <p>Say hello to your team.</p>
+              {conversation ? <Avatar name={conversation.userName} /> : <span className="empty-icon"><Icon name="chat" size={22} /></span>}
+              <strong>{conversation ? `This is the start of your conversation with ${conversation.userName}` : `This is the start of #${channel.name}`}</strong>
+              <p>{conversation ? 'Messages here are private between the two of you.' : 'Say hello to your team.'}</p>
             </div>
           )}
           {rows.map(({ message, day, newDay, grouped }) => {
-            const mine = message.userId === account.user.id
+            const mine = message.userId === me
             return (
               <div key={message.id}>
                 {newDay && <div className="chat-day"><span>{day}</span></div>}
@@ -197,26 +277,34 @@ function Chat() {
             )
           })}
         </div>
-        <form className="composer" onSubmit={send}>
-          <textarea
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) send(event)
-            }}
-            placeholder={active ? `Message #${active.name}` : 'Select a channel'}
-            rows={1}
-            maxLength={4000}
-            disabled={!active}
-            aria-label="Message"
-          />
-          <button type="submit" className="btn btn-primary btn-icon" disabled={!draft.trim() || sending} aria-label="Send message"><Icon name="send" size={17} /></button>
-        </form>
+        {dmClosed ? (
+          <div className="composer composer-closed">{conversation.userName} is no longer in this workspace.</div>
+        ) : (
+          <form className="composer" onSubmit={send}>
+            <textarea
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) send(event)
+              }}
+              placeholder={placeholder}
+              rows={1}
+              maxLength={4000}
+              disabled={!active}
+              aria-label="Message"
+            />
+            <button type="submit" className="btn btn-primary btn-icon" disabled={!draft.trim() || sending} aria-label="Send message"><Icon name="send" size={17} /></button>
+          </form>
+        )}
       </section>
-      {creating && <NewChannel onClose={() => setCreating(false)} onCreated={(channel) => {
-        setChannels((current) => [...current, channel])
-        setActiveId(channel.id)
-        toast(`#${channel.name} created`)
+      {creating && <NewChannel onClose={() => setCreating(false)} onCreated={(item) => {
+        setChannels((current) => [...current, item])
+        setActive({ kind: 'channel', id: item.id })
+        toast(`#${item.name} created`)
+      }} />}
+      {picking && <NewMessage members={data.members} me={me} onClose={() => setPicking(false)} onPick={(member) => {
+        setPicking(false)
+        openDirect(member.id)
       }} />}
     </div>
   )
