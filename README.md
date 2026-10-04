@@ -40,7 +40,7 @@ To use the local app, run `npm run dev:api` as well as `npm run dev`; the local 
 - **Work**: projects (with client, status and task progress), tasks (assignee, priority, due date, board and list views, drag-and-drop status), clients, campaigns (budget, platforms, leads, conversions, revenue) and a month-view calendar. Everything can be created, edited and deleted.
 - **Collaboration**: company files organised by folder, an owners-and-admins-only Document Vault, team chat channels (refreshed every few seconds), and notifications for task assignment, task completion and new members.
 - **Company**: editable company profile, and a billing page showing plan, trial status and usage.
-- **Plan limits enforced**: members (including pending invites), projects and storage. An ended trial is shown but does not lock the workspace, because online payments are not connected yet.
+- **Plan limits enforced**: members (including pending invites), projects and storage. Storage is a hard ceiling to the byte: an upload that would go over the plan's limit is refused, concurrent uploads are serialised so they cannot overshoot together, and a workspace over its limit after a downgrade cannot upload until it deletes files or upgrades. An ended trial is shown but does not lock the workspace, because online payments are not connected yet.
 - **Security**: bcrypt password hashes, opaque session tokens stored as HMAC hashes in HttpOnly SameSite cookies, organisation-scoped queries everywhere, server-side role checks, rate-limited auth endpoints, validated request bodies and a same-origin check on state-changing requests. Downloads are served as attachments with a sandboxing CSP; only raster images can open inline.
 
 ### Not connected yet
@@ -73,7 +73,7 @@ Plan prices live in the database (`subscription_plans`) and appear on the landin
 - Public: `GET /api/plans`
 - Super admin (requires `PLATFORM_ADMIN_EMAILS`): `GET /api/admin/overview`, `GET /api/admin/organizations`, `GET /api/admin/organizations/:id`, `PUT /api/admin/organizations/:id/subscription`, `DELETE /api/admin/organizations/:id`, `GET /api/admin/users`, `POST /api/admin/users/:id/reset-link`, `GET /api/admin/plans`, `PUT /api/admin/plans/:name`, `GET /api/admin/audit`
 - Files: `GET|POST /api/files`, `GET /api/files/:id/download`, `DELETE /api/files/:id`
-- Chat: `GET|POST /api/channels`, `DELETE /api/channels/:id`, `GET|POST /api/channels/:id/messages`
+- Chat: `GET|POST /api/channels`, `DELETE /api/channels/:id`, `GET|POST /api/channels/:id/messages`; private direct messages: `GET|POST /api/dms`, `GET|POST /api/dms/:id/messages` (only the two participants can read them)
 
 Remember to run `npm run db:migrate` after pulling these changes; migrations `003` and `004` add the new tables.
 

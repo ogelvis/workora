@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
 import { ADMINS, HttpError, getSubscription, logActivity, route, withTransaction } from '../lib.js'
+import { formatStorage } from '../format.js'
 
 const router = express.Router()
 router.use(requireAuth)
@@ -48,7 +49,12 @@ router.get('/files', route(async (request, response) => {
      WHERE organization_id = $1 AND vault = $2 GROUP BY folder`,
     [request.auth.organizationId, vault],
   )
+  const [usage, subscription] = await Promise.all([
+    pool.query('SELECT COALESCE(sum(size_bytes), 0)::float AS used FROM files WHERE organization_id = $1', [request.auth.organizationId]),
+    getSubscription(pool, request.auth.organizationId),
+  ])
   return response.json({
+    storage: { usedBytes: usage.rows[0].used, limitBytes: subscription ? Number(subscription.storage_limit_bytes) : 0 },
     files: result.rows,
     folders: (vault ? VAULT_FOLDERS : FOLDERS).map((name) => ({
       name,
@@ -89,8 +95,15 @@ router.post(
         'SELECT COALESCE(sum(size_bytes), 0)::float AS used FROM files WHERE organization_id = $1',
         [request.auth.organizationId],
       )
-      if (subscription && used.rows[0].used + size > Number(subscription.storage_limit_bytes)) {
-        throw new HttpError(413, 'This upload would exceed your plan’s storage limit.')
+      // The plan's limit is a hard ceiling: a workspace without a plan has no storage, and
+      // the subscription row lock above serialises concurrent uploads so they cannot overshoot.
+      const limit = subscription ? Number(subscription.storage_limit_bytes) : 0
+      const usedBytes = used.rows[0].used
+      if (usedBytes >= limit) {
+        throw new HttpError(413, `Your storage is full: ${formatStorage(usedBytes)} of ${formatStorage(limit)} used. Delete files or upgrade your plan to upload more.`)
+      }
+      if (usedBytes + size > limit) {
+        throw new HttpError(413, `Not enough space for this file. ${formatStorage(limit - usedBytes)} is left on your plan and the file is ${formatStorage(size)}.`)
       }
       const inserted = await client.query(
         `INSERT INTO files (organization_id, folder, vault, name, mime_type, size_bytes, data, uploaded_by)
