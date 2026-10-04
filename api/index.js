@@ -8,6 +8,21 @@ function loadApp() {
   return appPromise
 }
 
+// vercel.json rewrites every /api/* request to this one function and passes the original
+// path as __path, because Vercel's file-based routing would otherwise only reach it for
+// some path depths. Rebuild the URL Express should see from whichever form arrives.
+export function originalUrl(requestUrl) {
+  const url = new URL(requestUrl, 'http://localhost')
+  const rewritten = url.searchParams.get('__path')
+  if (rewritten !== null) {
+    url.searchParams.delete('__path')
+    const query = url.searchParams.toString()
+    return `/api/${rewritten.replace(/^\/+/, '')}${query ? `?${query}` : ''}`
+  }
+  if (url.pathname === '/api' || url.pathname.startsWith('/api/')) return requestUrl
+  return `/api${requestUrl.startsWith('/') ? '' : '/'}${requestUrl}`
+}
+
 export default async function handler(request, response) {
   let app
   try {
@@ -22,10 +37,6 @@ export default async function handler(request, response) {
     }))
     return
   }
-  const requestUrl = request.url || '/'
-  const pathname = requestUrl.split('?')[0]
-  if (pathname !== '/api' && !pathname.startsWith('/api/')) {
-    request.url = `/api${requestUrl.startsWith('/') ? '' : '/'}${requestUrl}`
-  }
+  request.url = originalUrl(request.url || '/')
   return app(request, response)
 }
