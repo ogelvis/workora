@@ -37,3 +37,12 @@
 .gate > .spinner { border-color: rgba(255, 255, 255, 0.2); border-top-color: var(--brand-glow); }
 .gate-note { color: var(--muted); font-size: 0.88rem; line-height: 1.6; margin: 0; }
 .gate-note code { background: var(--bg); border-radius: 6px; color: var(--ink); font-size: 0.82rem; margin: 0 4px; padding: 2px 6px; }
+
+/* Partner onboarding */
+.notice { align-items: flex-start; border-radius: 11px; display: flex; font-size: 0.86rem; gap: 10px; line-height: 1.5; padding: 11px 13px; }
+.notice .icon { flex-shrink: 0; margin-top: 2px; }
+.notice-success { background: var(--success-soft); color: #0b6b4a; }
+.notice-warning { background: var(--warning-soft); color: #7a4a0c; }
+.partner-tag { background: var(--brand-soft); border-radius: 999px; color: var(--brand-hover); font-size: 0.66rem; font-weight: 750; letter-spacing: 0.04em; margin-left: 8px; padding: 2px 8px; text-transform: uppercase; vertical-align: middle; }
+.admin-section h3 { align-items: center; display: flex; gap: 8px; }
+.toolbar-row .btn-primary { margin-left: auto; }

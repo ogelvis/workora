@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import LandingPage from './LandingPage.jsx'
 import AuthScreen from './AuthScreen.jsx'
 import Workspace from './workspace/Workspace.jsx'
@@ -7,10 +7,11 @@ import Icon from './components/Icon.jsx'
 import { ToastProvider } from './components/ui.jsx'
 import { api } from './lib/api.js'
 
-// Invite and reset links arrive as ?invite=… or ?reset=…; read them once, then clean the URL.
+// Invite, reset and partner welcome links arrive as ?invite=…, ?reset=… or ?welcome=…;
+// read them once, then clean the URL.
 function readLinkToken() {
   const params = new URLSearchParams(window.location.search)
-  for (const mode of ['invite', 'reset']) {
+  for (const mode of ['invite', 'reset', 'welcome']) {
     const token = params.get(mode)
     if (token) return { mode, token }
   }
@@ -44,14 +45,44 @@ function readEntryPath() {
   return path && path !== 'index.html' ? path : null
 }
 
+// A partner's emailed link: sign them in and open their dashboard straight away.
+function Welcome({ token, onSignedIn, onFailed }) {
+  const [error, setError] = useState('')
+  const started = useRef(false)
+  useEffect(() => {
+    if (started.current) return
+    started.current = true
+    api('/api/auth/welcome', { method: 'POST', body: { token } })
+      .then(onSignedIn)
+      .catch((requestError) => setError(requestError.message))
+  }, [token, onSignedIn])
+  return (
+    <div className="suspended">
+      <div className="suspended-card">
+        {error ? <>
+          <span className="empty-icon"><Icon name="alert" size={22} /></span>
+          <h1>We couldn’t open your workspace</h1>
+          <p>{error}</p>
+          <button type="button" className="btn btn-primary" onClick={onFailed}>Go to sign in</button>
+        </> : <>
+          <span className="spinner" />
+          <h1>Opening your OVO workspace…</h1>
+          <p>Signing you in securely.</p>
+        </>}
+      </div>
+    </div>
+  )
+}
+
 function App() {
   const [linkToken] = useState(readLinkToken)
   const [entryPath] = useState(readEntryPath)
   const [account, setAccount] = useState(null)
   const [gateway, setGateway] = useState(false)
   const [checking, setChecking] = useState(!linkToken)
+  const [welcoming, setWelcoming] = useState(linkToken?.mode === 'welcome')
   const [screen, setScreen] = useState(linkToken ? 'auth' : 'landing')
-  const [authMode, setAuthMode] = useState(linkToken?.mode || 'login')
+  const [authMode, setAuthMode] = useState(linkToken && linkToken.mode !== 'welcome' ? linkToken.mode : 'login')
 
   useEffect(() => {
     if (linkToken) {
@@ -97,6 +128,15 @@ function App() {
   }
 
   if (checking) return <div className="boot" aria-label="Loading OVO"><span className="spinner" /></div>
+  if (welcoming) {
+    return (
+      <Welcome
+        token={linkToken.token}
+        onSignedIn={async () => { await authenticated(); setWelcoming(false) }}
+        onFailed={() => { setWelcoming(false); setAuthMode('login'); setScreen('auth') }}
+      />
+    )
+  }
 
   return (
     <ToastProvider>

@@ -5,6 +5,7 @@ import { Avatar, Button, Empty, Field, Meter, Modal, PageHeader, Pill, Segmented
 import { api } from '../lib/api.js'
 import { capitalize, formatBytes, formatDateTime, formatPrice, timeAgo, toLocalInput } from '../lib/format.js'
 import { useWorkspace } from '../workspace/context.js'
+import { INDUSTRIES } from '../../shared/industries.js'
 
 const statusTone = { trial: 'info', active: 'success', past_due: 'warning', cancelled: 'muted', expired: 'warning', suspended: 'danger' }
 const statusLabel = { trial: 'Trial', active: 'Active', past_due: 'Past due', cancelled: 'Cancelled', expired: 'Expired', suspended: 'Suspended' }
@@ -24,6 +25,109 @@ function addDays(days) {
   return toLocalInput(date.toISOString())
 }
 
+// ---------------------------------------------------------------- Partner businesses
+
+// What happened to the welcome email, with the link as a fallback to send by hand.
+function LinkResult({ result, email }) {
+  const { toast } = useWorkspace()
+  return (
+    <div className="stack-sm">
+      {result.emailSent ? (
+        <div className="notice notice-success"><Icon name="check" size={16} /><span>Welcome email sent to <strong>{email}</strong>. When they click the link, their dashboard opens straight away.</span></div>
+      ) : (
+        <div className="notice notice-warning"><Icon name="alert" size={16} /><span>The email wasn’t sent: {result.emailError} Copy the link below and send it to <strong>{email}</strong> yourself (WhatsApp or email).</span></div>
+      )}
+      <div className="link-box">
+        <input readOnly value={result.link} onFocus={(event) => event.target.select()} aria-label="Sign-in link" />
+        <Button variant="primary" icon="copy" onClick={async () => toast(await copyText(result.link) ? 'Link copied' : 'Copy the link manually')}>Copy</Button>
+      </div>
+      <p className="field-hint">The link works once and expires on {new Date(result.expiresAt).toLocaleDateString()}. Inside, they choose a password under Settings → Security.</p>
+    </div>
+  )
+}
+
+function AddPartner({ plans, onClose, onCreated }) {
+  const { toast } = useWorkspace()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [status, setStatus] = useState('active')
+  const [result, setResult] = useState(null)
+  const [emailReady, setEmailReady] = useState(null)
+
+  useEffect(() => {
+    api('/api/admin/email-status').then((data) => setEmailReady(data.configured)).catch(() => setEmailReady(false))
+  }, [])
+
+  async function submit(event) {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    const values = Object.fromEntries(new FormData(event.currentTarget).entries())
+    try {
+      const created = await api('/api/admin/partners', {
+        method: 'POST',
+        body: { ...values, status, paidUntil: status === 'active' && values.paidUntil ? new Date(`${values.paidUntil}T23:59:59`).toISOString() : null },
+      })
+      setResult({ ...created, email: values.email })
+      onCreated()
+      toast('Partner business added')
+    } catch (requestError) {
+      setError(requestError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal title={result ? `${result.organization.name} is ready` : 'Add a partner business'} eyebrow="Super admin · Partners" onClose={onClose} width={640} busy={busy}>
+      {result ? (
+        <>
+          <div className="modal-body"><LinkResult result={result} email={result.email} /></div>
+          <div className="modal-foot"><Button variant="primary" onClick={onClose}>Done</Button></div>
+        </>
+      ) : (
+        <form onSubmit={submit}>
+          <div className="modal-body stack-sm">
+            <p className="confirm-text">Creates the workspace and its owner account for them. They get an email with a one-time link that opens their dashboard directly — no sign-up or password needed to start.</p>
+            {emailReady === false && (
+              <div className="notice notice-warning"><Icon name="alert" size={16} /><span>Email sending isn’t set up yet, so you’ll get a link to send them yourself.</span></div>
+            )}
+            <div className="form-grid">
+              <Field label="Business name"><input name="businessName" required minLength={2} maxLength={160} placeholder="e.g. ABC Properties Ltd" /></Field>
+              <Field label="Business type">
+                <select name="industry" defaultValue="">
+                  <option value="" disabled>Choose…</option>
+                  {INDUSTRIES.map((industry) => <option key={industry.key} value={industry.label}>{industry.label}</option>)}
+                </select>
+              </Field>
+              <Field label="Contact person"><input name="contactName" required minLength={2} maxLength={120} placeholder="Full name" /></Field>
+              <Field label="Contact email" hint="The welcome link goes here"><input name="email" type="email" required /></Field>
+              <Field label="Plan">
+                <select name="plan" defaultValue={plans.find((plan) => plan.name === 'Business') ? 'Business' : plans[0]?.name}>
+                  {plans.map((plan) => <option key={plan.name} value={plan.name}>{plan.name}</option>)}
+                </select>
+              </Field>
+              <Field label="Access">
+                <select value={status} onChange={(event) => setStatus(event.target.value)}>
+                  <option value="active">Active (partner / paid)</option>
+                  <option value="trial">14-day trial</option>
+                </select>
+              </Field>
+              {status === 'active' && <Field label="Paid until" hint="Optional. Leave empty for open-ended partner access."><input name="paidUntil" type="date" /></Field>}
+              <Field label="Notes" hint="Agreement, contact, payment terms" wide><textarea name="billingNotes" rows={2} maxLength={2000} placeholder="Partner business added by OVO." /></Field>
+            </div>
+            {error && <p className="form-error" role="alert">{error}</p>}
+          </div>
+          <div className="modal-foot">
+            <Button onClick={onClose} disabled={busy}>Cancel</Button>
+            <Button type="submit" variant="primary" icon="send" disabled={busy}>{busy ? 'Creating…' : 'Create & send welcome link'}</Button>
+          </div>
+        </form>
+      )}
+    </Modal>
+  )
+}
+
 // ---------------------------------------------------------------- Workspace detail
 
 function WorkspaceDetail({ id, plans, onClose, onChanged }) {
@@ -33,6 +137,20 @@ function WorkspaceDetail({ id, plans, onClose, onChanged }) {
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [confirmName, setConfirmName] = useState('')
+  const [linkResult, setLinkResult] = useState(null)
+
+  async function sendLink() {
+    setSaving(true)
+    try {
+      const result = await api(`/api/admin/organizations/${id}/welcome-link`, { method: 'POST' })
+      setLinkResult(result)
+      toast(result.emailSent ? 'Sign-in link emailed' : 'Link created — send it manually')
+    } catch (error) {
+      toast(error.message, 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   useEffect(() => {
     api(`/api/admin/organizations/${id}`).then((result) => {
@@ -93,13 +211,23 @@ function WorkspaceDetail({ id, plans, onClose, onChanged }) {
         <>
           <div className="modal-body admin-detail">
             <div className="admin-facts">
-              <div><span>Owner</span><strong>{org.ownerName || '—'}</strong><small>{org.ownerEmail}</small></div>
+              <div><span>Owner</span><strong>{org.ownerName || '—'}</strong><small>{org.ownerEmail}</small>{org.partner && <small>{org.ownerPasswordSet ? 'Password set' : org.ownerVerifiedAt ? 'Signed in · no password yet' : 'Hasn’t opened their link yet'}</small>}</div>
               <div><span>Status</span><StatusPill organization={org} /></div>
               <div><span>Members</span><strong>{org.members} / {org.userLimit >= 2147483647 ? '∞' : org.userLimit}</strong></div>
               <div><span>Storage</span><strong>{formatBytes(org.storageBytes)}</strong><small>of {formatBytes(org.storageLimitBytes)}</small></div>
               <div><span>Created</span><strong>{new Date(org.createdAt).toLocaleDateString()}</strong></div>
               <div><span>Last active</span><strong>{org.lastActiveAt ? timeAgo(org.lastActiveAt) : '—'}</strong></div>
             </div>
+
+            {org.ownerId && (
+              <section className="admin-section">
+                <h3>Sign-in link {org.partner && <Pill tone="info">Partner</Pill>}</h3>
+                <p className="muted-note">Email the owner a one-time link that opens their dashboard directly. Useful for partners who haven’t set a password, or anyone locked out.</p>
+                {linkResult ? <LinkResult result={linkResult} email={org.ownerEmail} /> : (
+                  <Button size="sm" icon="send" disabled={saving} onClick={sendLink}>Send sign-in link to {org.ownerEmail}</Button>
+                )}
+              </section>
+            )}
 
             <section className="admin-section">
               <h3>Subscription</h3>
@@ -233,6 +361,7 @@ function OverviewTab() {
 
 function WorkspacesTab({ plans }) {
   const { toast } = useWorkspace()
+  const [adding, setAdding] = useState(false)
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('')
   const [organizations, setOrganizations] = useState(null)
@@ -262,6 +391,7 @@ function WorkspacesTab({ plans }) {
           <option value="">All statuses</option>
           {Object.entries(statusLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
+        <Button variant="primary" icon="plus" onClick={() => setAdding(true)}>Add partner business</Button>
       </div>
       {organizations && !organizations.length ? <Empty icon="building" title="No workspaces found">Try a different search.</Empty> : (
         <div className="card table-card">
@@ -273,7 +403,7 @@ function WorkspacesTab({ plans }) {
                   <td>
                     <button type="button" className="client-cell" onClick={() => setOpenId(org.id)}>
                       <Avatar name={org.name} size="sm" />
-                      <div className="two-line"><strong>{org.name}</strong><span>{org.businessEmail}</span></div>
+                      <div className="two-line"><strong>{org.name}{org.partner && <span className="partner-tag">Partner</span>}</strong><span>{org.businessEmail}</span></div>
                     </button>
                   </td>
                   <td><div className="two-line"><span className="cell-strong">{org.ownerName || '—'}</span><span>{org.ownerEmail}</span></div></td>
@@ -293,6 +423,7 @@ function WorkspacesTab({ plans }) {
           </table>
         </div>
       )}
+      {adding && <AddPartner plans={plans} onClose={() => setAdding(false)} onCreated={() => load().catch(() => {})} />}
       {openId && <WorkspaceDetail id={openId} plans={plans} onClose={() => setOpenId(null)} onChanged={() => load().catch(() => {})} />}
     </div>
   )

@@ -47,7 +47,8 @@ const resetSchema = z.object({
 })
 
 const changePasswordSchema = z.object({
-  currentPassword: z.string().min(1).max(128),
+  // Accounts created by OVO for partners have no password yet, so there is nothing to confirm.
+  currentPassword: z.string().max(128).optional(),
   newPassword: passwordSchema,
 })
 
@@ -120,7 +121,7 @@ router.post('/login', authLimiter, route(async (request, response) => {
   const parsed = loginSchema.safeParse(request.body)
   if (!parsed.success) return validationError(response, parsed.error)
   const result = await pool.query(
-    `SELECT u.id, u.full_name, u.email, u.password_hash, om.organization_id,
+    `SELECT u.id, u.full_name, u.email, u.password_hash, u.password_set, om.organization_id,
             o.name AS organization_name, om.role
      FROM users u
      LEFT JOIN organization_members om ON om.user_id = u.id
@@ -135,6 +136,9 @@ router.post('/login', authLimiter, route(async (request, response) => {
   // costs nothing and saves people guessing.
   if (!row) {
     return response.status(401).json({ error: 'No OVO account uses this email. Check the spelling or create a workspace.', code: 'no_account' })
+  }
+  if (!row.password_set) {
+    return response.status(401).json({ error: 'This account hasn’t chosen a password yet. Open the sign-in link from your OVO welcome email, or ask OVO support to send a new one.', code: 'no_password' })
   }
   if (!(await bcrypt.compare(parsed.data.password, row.password_hash))) {
     return response.status(401).json({ error: 'That password is incorrect. Ask your workspace admin for a reset link if you’ve forgotten it.', code: 'wrong_password' })
@@ -247,17 +251,43 @@ router.post('/console-setup', authLimiter, route(async (request, response) => {
   return response.status(201).json({ ok: true })
 }))
 
+// ---------------------------------------------------------------- Partner welcome links
+
+// The emailed link signs the owner straight into their workspace, once.
+router.post('/welcome', authLimiter, route(async (request, response) => {
+  const { token } = z.object({ token: z.string().min(20).max(200) }).parse(request.body)
+  const userId = await withTransaction(async (client) => {
+    const result = await client.query(
+      `SELECT w.id, w.user_id, w.expires_at, w.used_at FROM welcome_links w WHERE w.token_hash = $1 FOR UPDATE`,
+      [hashToken(token)],
+    )
+    const link = result.rows[0]
+    if (!link) throw new HttpError(404, 'This sign-in link isn’t valid. Ask OVO support for a new one.')
+    if (link.used_at) throw new HttpError(410, 'This sign-in link has already been used. Sign in with your password, or ask OVO support for a new link.')
+    if (new Date(link.expires_at) < new Date()) throw new HttpError(410, 'This sign-in link has expired. Ask OVO support for a new one.')
+    await client.query('UPDATE welcome_links SET used_at = now() WHERE id = $1', [link.id])
+    await client.query('UPDATE users SET email_verified_at = COALESCE(email_verified_at, now()) WHERE id = $1', [link.user_id])
+    return link.user_id
+  })
+  await createSession(userId, response)
+  return response.json({ ok: true })
+}))
+
 router.post('/logout', route(async (request, response) => {
   await destroySession(request, response)
   return response.status(204).end()
 }))
 
 router.get('/me', requireAuth, route(async (request, response) => {
-  const subscription = await getSubscription(pool, request.auth.organizationId)
+  const [subscription, user] = await Promise.all([
+    getSubscription(pool, request.auth.organizationId),
+    pool.query('SELECT password_set FROM users WHERE id = $1', [request.auth.userId]),
+  ])
   return response.json({
     ...accountPayload(request.auth),
     organization: { id: request.auth.organizationId, name: request.auth.organizationName, industry: request.auth.organizationIndustry },
     platformAdmin: request.auth.platformAdmin,
+    passwordSet: user.rows[0]?.password_set ?? true,
     subscription: subscription && {
       plan: subscription.plan_name,
       status: subscription.status,
@@ -271,13 +301,13 @@ router.get('/me', requireAuth, route(async (request, response) => {
 router.post('/change-password', requireAuth, authLimiter, route(async (request, response) => {
   const parsed = changePasswordSchema.safeParse(request.body)
   if (!parsed.success) return validationError(response, parsed.error)
-  const user = await pool.query('SELECT password_hash FROM users WHERE id = $1', [request.auth.userId])
-  if (!(await bcrypt.compare(parsed.data.currentPassword, user.rows[0].password_hash))) {
+  const user = await pool.query('SELECT password_hash, password_set FROM users WHERE id = $1', [request.auth.userId])
+  if (user.rows[0].password_set && !(await bcrypt.compare(parsed.data.currentPassword || '', user.rows[0].password_hash))) {
     return response.status(400).json({ error: 'Your current password is incorrect.' })
   }
   const passwordHash = await bcrypt.hash(parsed.data.newPassword, 12)
   await withTransaction(async (client) => {
-    await client.query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, request.auth.userId])
+    await client.query('UPDATE users SET password_hash = $1, password_set = true WHERE id = $2', [passwordHash, request.auth.userId])
     await client.query('DELETE FROM user_sessions WHERE user_id = $1 AND id != $2', [request.auth.userId, request.auth.sessionId])
     if (request.auth.organizationId) await logActivity(client, request.auth, 'changed their password', 'user', request.auth.fullName)
   })
@@ -412,7 +442,7 @@ router.post('/reset-password', authLimiter, route(async (request, response) => {
   await withTransaction(async (client) => {
     const reset = await findReset(client, parsed.data.token)
     if (!reset) throw new HttpError(404, 'This reset link is invalid or has expired.')
-    await client.query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, reset.user_id])
+    await client.query('UPDATE users SET password_hash = $1, password_set = true WHERE id = $2', [passwordHash, reset.user_id])
     await client.query('UPDATE password_resets SET used_at = now() WHERE id = $1', [reset.id])
     await client.query('DELETE FROM user_sessions WHERE user_id = $1', [reset.user_id])
   })

@@ -359,3 +359,5 @@ button.chip { border: 0; }
   .grid-wrap { max-height: none; }
   .ws-crumbs { display: none; }
 }
+
+.ws-banner-brand { background: var(--brand-soft); border-bottom-color: #ddd3ff; color: var(--brand-hover); }

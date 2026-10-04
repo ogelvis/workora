@@ -286,6 +286,13 @@ function Workspace({ account, setAccount, onSignedOut }) {
               <a href="#/settings" className="ws-avatar-link" aria-label="Account settings"><Avatar name={account.user.fullName} size="sm" /></a>
             </div>
           </header>
+          {account.passwordSet === false && view !== 'settings' && (
+            <div className="ws-banner ws-banner-brand">
+              <Icon name="key" size={16} />
+              Welcome to OVO! Choose a password so you can sign in again from any device.
+              <a href="#/settings?tab=security">Set password</a>
+            </div>
+          )}
           {account.subscription?.trialExpired && ADMIN_ROLES.includes(role) && (
             <div className="ws-banner">
               <Icon name="alert" size={16} />

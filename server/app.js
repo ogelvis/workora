@@ -28,7 +28,7 @@ const app = express()
 const isProduction = process.env.NODE_ENV === 'production'
 const rootDir = path.dirname(fileURLToPath(import.meta.url))
 const migrationsDir = path.join(rootDir, 'db', 'migrations')
-const LATEST_MIGRATION = '007_sheets.sql'
+const LATEST_MIGRATION = '008_partner_onboarding.sql'
 
 app.disable('x-powered-by')
 app.set('trust proxy', 1)
