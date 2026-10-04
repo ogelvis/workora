@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
-import ActivityChart from '../../components/ActivityChart.jsx'
-import Icon from '../../components/Icon.jsx'
-import { Avatar, Button, Empty, Field, Meter, Modal, PageHeader, Pill, Segmented, copyText } from '../../components/ui.jsx'
-import { api } from '../../lib/api.js'
-import { capitalize, formatBytes, formatDateTime, formatPrice, timeAgo, toLocalInput } from '../../lib/format.js'
-import { useWorkspace } from '../context.js'
+import ActivityChart from '../components/ActivityChart.jsx'
+import Icon from '../components/Icon.jsx'
+import { Avatar, Button, Empty, Field, Meter, Modal, PageHeader, Pill, Segmented, copyText } from '../components/ui.jsx'
+import { api } from '../lib/api.js'
+import { capitalize, formatBytes, formatDateTime, formatPrice, timeAgo, toLocalInput } from '../lib/format.js'
+import { useWorkspace } from '../workspace/context.js'
 
 const statusTone = { trial: 'info', active: 'success', past_due: 'warning', cancelled: 'muted', expired: 'warning', suspended: 'danger' }
 const statusLabel = { trial: 'Trial', active: 'Active', past_due: 'Past due', cancelled: 'Cancelled', expired: 'Expired', suspended: 'Suspended' }

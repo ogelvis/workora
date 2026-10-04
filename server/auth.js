@@ -29,18 +29,30 @@ export function isPlatformAdmin(email) {
   return admins.includes(String(email).toLowerCase())
 }
 
+// The owner's private sign-in lives at a secret path set in ADMIN_PATH. The path is
+// checked on the server only, so it never appears in the public JavaScript bundle.
+export function adminPath() {
+  const value = (process.env.ADMIN_PATH || '').trim().replace(/^\/+|\/+$/g, '')
+  // No valid ADMIN_PATH means the private sign-in (and so the console) is switched off.
+  return /^[A-Za-z0-9_-]{6,64}$/.test(value) ? value : null
+}
+
 export function hashToken(token) {
   return createHmac('sha256', process.env.SESSION_SECRET).update(token).digest()
 }
 
-export async function createSession(userId, response) {
+const ADMIN_SESSION_MS = 12 * 60 * 60 * 1000
+
+export async function createSession(userId, response, { platformAdmin = false } = {}) {
   const token = randomBytes(32).toString('base64url')
-  const expiresAt = new Date(Date.now() + sessionDays * 24 * 60 * 60 * 1000)
+  // Console sessions are short-lived; workspace sessions last SESSION_TTL_DAYS.
+  const maxAge = platformAdmin ? ADMIN_SESSION_MS : sessionDays * 24 * 60 * 60 * 1000
+  const expiresAt = new Date(Date.now() + maxAge)
   await pool.query(
-    'INSERT INTO user_sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)',
-    [hashToken(token), userId, expiresAt],
+    'INSERT INTO user_sessions (token_hash, user_id, expires_at, platform_admin) VALUES ($1, $2, $3, $4)',
+    [hashToken(token), userId, expiresAt, platformAdmin],
   )
-  response.cookie(cookieName, token, sessionCookieOptions(sessionDays * 24 * 60 * 60 * 1000))
+  response.cookie(cookieName, token, sessionCookieOptions(maxAge))
 }
 
 export async function destroySession(request, response) {
@@ -59,7 +71,7 @@ export async function requireAuth(request, response, next) {
 
   try {
     const result = await pool.query(
-      `SELECT s.id AS session_id, u.id, u.full_name, u.email, om.organization_id, o.name AS organization_name, om.role,
+      `SELECT s.id AS session_id, s.platform_admin, u.id, u.full_name, u.email, om.organization_id, o.name AS organization_name, om.role,
               sub.status AS subscription_status
        FROM user_sessions s
        JOIN users u ON u.id = s.user_id
@@ -84,7 +96,9 @@ export async function requireAuth(request, response, next) {
       organizationId: row.organization_id,
       organizationName: row.organization_name,
       role: row.role,
-      platformAdmin: isPlatformAdmin(row.email),
+      // Both conditions: the session came through the private sign-in, and the email is
+      // still listed (removing it from PLATFORM_ADMIN_EMAILS revokes access immediately).
+      platformAdmin: row.platform_admin && isPlatformAdmin(row.email),
       subscriptionStatus: row.subscription_status,
     }
     // A suspended workspace can still sign in and out (so the app can explain why),

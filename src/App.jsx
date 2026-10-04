@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import LandingPage from './LandingPage.jsx'
 import AuthScreen from './AuthScreen.jsx'
 import Workspace from './workspace/Workspace.jsx'
+import { ConsoleApp, ConsoleLogin } from './console/Console.jsx'
 import Icon from './components/Icon.jsx'
 import { ToastProvider } from './components/ui.jsx'
 import { api } from './lib/api.js'
@@ -37,9 +38,17 @@ function Suspended({ account, onSignedOut }) {
   )
 }
 
+// Any address other than "/" might be the owner's private sign-in; only the server knows.
+function readEntryPath() {
+  const path = window.location.pathname.replace(/^\/+|\/+$/g, '')
+  return path && path !== 'index.html' ? path : null
+}
+
 function App() {
   const [linkToken] = useState(readLinkToken)
+  const [entryPath] = useState(readEntryPath)
   const [account, setAccount] = useState(null)
+  const [gateway, setGateway] = useState(false)
   const [checking, setChecking] = useState(!linkToken)
   const [screen, setScreen] = useState(linkToken ? 'auth' : 'landing')
   const [authMode, setAuthMode] = useState(linkToken?.mode || 'login')
@@ -50,14 +59,22 @@ function App() {
       return
     }
     let active = true
-    api('/api/auth/me')
-      .then((data) => active && setAccount(data))
-      .catch(() => {})
+    const gatewayCheck = entryPath
+      ? api(`/api/auth/gateway/${encodeURIComponent(entryPath)}`).then(() => true).catch(() => false)
+      : Promise.resolve(false)
+    Promise.all([api('/api/auth/me').catch(() => null), gatewayCheck])
+      .then(([me, isGateway]) => {
+        if (!active) return
+        setAccount(me)
+        setGateway(isGateway)
+        // Unknown addresses quietly become the homepage.
+        if (entryPath && !isGateway) window.history.replaceState(null, '', '/')
+      })
       .finally(() => active && setChecking(false))
     return () => {
       active = false
     }
-  }, [linkToken])
+  }, [linkToken, entryPath])
 
   const authenticated = useCallback(async () => {
     // Fetch /me so the workspace also receives subscription details.
@@ -65,11 +82,13 @@ function App() {
   }, [])
 
   const signedOut = useCallback(() => {
+    // Leaving the console returns to the private sign-in; leaving a workspace to the login page.
+    const fromConsole = Boolean(account?.platformAdmin)
     setAccount(null)
     setAuthMode('login')
-    setScreen('auth')
-    window.history.replaceState(null, '', window.location.pathname)
-  }, [])
+    setScreen(fromConsole ? 'landing' : 'auth')
+    window.history.replaceState(null, '', fromConsole ? window.location.pathname : '/')
+  }, [account])
 
   function openAuth(mode) {
     setAuthMode(mode)
@@ -81,7 +100,11 @@ function App() {
 
   return (
     <ToastProvider>
-      {account && account.subscription?.status === 'suspended' && !account.platformAdmin ? (
+      {account?.platformAdmin ? (
+        <ConsoleApp account={account} onSignedOut={signedOut} />
+      ) : gateway ? (
+        <ConsoleLogin path={entryPath} onSignedIn={authenticated} />
+      ) : account && account.subscription?.status === 'suspended' ? (
         <Suspended account={account} onSignedOut={signedOut} />
       ) : account ? (
         <Workspace account={account} setAccount={setAccount} onSignedOut={signedOut} />

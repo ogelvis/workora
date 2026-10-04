@@ -17,13 +17,12 @@ import Chat from './views/Chat.jsx'
 import Notifications from './views/Notifications.jsx'
 import Billing from './views/Billing.jsx'
 import Settings from './views/Settings.jsx'
-import Admin from './views/Admin.jsx'
 import './workspace.css'
 
 const views = {
   overview: Overview, projects: Projects, tasks: Tasks, clients: Clients, campaigns: Campaigns,
   calendar: Calendar, files: Files, vault: Files, chat: Chat, notifications: Notifications,
-  billing: Billing, settings: Settings, admin: Admin,
+  billing: Billing, settings: Settings,
 }
 
 // Which store collections each record type touches, so a save refreshes only what changed.
@@ -58,8 +57,7 @@ function Workspace({ account, setAccount, onSignedOut }) {
   const [search, setSearch] = useState('')
   const [navOpen, setNavOpen] = useState(false)
 
-  const platformAdmin = Boolean(account.platformAdmin)
-  const allowed = useMemo(() => allowedViews(role, platformAdmin), [role, platformAdmin])
+  const allowed = useMemo(() => allowedViews(role), [role])
   const view = allowed.some((item) => item.key === route.view) ? route.view : 'overview'
 
   useEffect(() => {
@@ -181,7 +179,7 @@ function Workspace({ account, setAccount, onSignedOut }) {
           </div>
           <nav className="ws-nav">
             {navigation.map((group) => {
-              const items = group.items.filter((item) => canSee(item, role, platformAdmin))
+              const items = group.items.filter((item) => canSee(item, role))
               if (!items.length) return null
               return (
                 <div key={group.section} className="ws-nav-group">

@@ -51,7 +51,13 @@ To use the local app, run `npm run dev:api` as well as `npm run dev`; the local 
 
 ## Super admin (platform owner)
 
-Set `PLATFORM_ADMIN_EMAILS` (comma-separated) in Vercel's Environment Variables and redeploy. Anyone signed in with one of those emails sees **Super admin** in the sidebar: an overview of every workspace (sign-ups, paying workspaces, monthly recurring revenue), a searchable workspace list where you can change plans, record payments ("paid until"), extend trials, suspend or delete workspaces, a user list with password-reset links, plan prices and limits, and an audit log of every admin action. Suspended workspaces are locked out until reactivated. Set `SUPPORT_EMAIL` so customers can request upgrades from their Billing page.
+The owner's control console has its own private sign-in at a secret address. Set these in Vercel's Environment Variables (Production) and redeploy:
+
+- `ADMIN_PATH`: the secret address, for example `MaryNgaji` gives `https://your-domain/MaryNgaji`. 6–64 letters, numbers, `-` or `_`. Without it the console is switched off. The path is checked on the server only and never appears in the public JavaScript.
+- `PLATFORM_ADMIN_EMAILS`: comma-separated emails allowed to sign in there. They must also have a normal Workora account.
+- `SUPPORT_EMAIL`: where customers' upgrade requests go (shown on the Billing page).
+
+Only sessions started through the secret address get console access, and they last 12 hours. Signing in on the normal page with an owner email opens that person's workspace only. Any other address shows the homepage, and checks of the secret address are rate-limited. The console has an overview (sign-ups, paying workspaces, monthly recurring revenue), workspace search with plan, payment ("paid until"), trial, suspension and deletion controls, user lookup with password-reset links, plan prices and limits, and an audit log of every admin action. Suspended workspaces are locked out until reactivated.
 
 Plan prices live in the database (`subscription_plans`) and appear on the landing page and Billing page. Migration `004_platform_admin_pricing.sql` seeds the suggested launch prices; change them any time under **Super admin → Plans & pricing**.
 
@@ -71,11 +77,12 @@ Plan prices live in the database (`subscription_plans`) and appear on the landin
 - Notifications: `GET /api/notifications`, `PATCH /api/notifications/:id/read`, `POST /api/notifications/read-all`
 - Team: `GET /api/members`, `PATCH|DELETE /api/members/:userId`, `POST /api/members/:userId/reset-link`, `GET|POST /api/invitations`, `DELETE /api/invitations/:id`, `GET|PUT /api/organization`, `GET /api/billing`
 - Public: `GET /api/plans`
-- Super admin (requires `PLATFORM_ADMIN_EMAILS`): `GET /api/admin/overview`, `GET /api/admin/organizations`, `GET /api/admin/organizations/:id`, `PUT /api/admin/organizations/:id/subscription`, `DELETE /api/admin/organizations/:id`, `GET /api/admin/users`, `POST /api/admin/users/:id/reset-link`, `GET /api/admin/plans`, `PUT /api/admin/plans/:name`, `GET /api/admin/audit`
+- Owner sign-in: `GET /api/auth/gateway/:path`, `POST /api/auth/console-login`
+- Super admin (console sessions only): `GET /api/admin/overview`, `GET /api/admin/organizations`, `GET /api/admin/organizations/:id`, `PUT /api/admin/organizations/:id/subscription`, `DELETE /api/admin/organizations/:id`, `GET /api/admin/users`, `POST /api/admin/users/:id/reset-link`, `GET /api/admin/plans`, `PUT /api/admin/plans/:name`, `GET /api/admin/audit`
 - Files: `GET|POST /api/files`, `GET /api/files/:id/download`, `DELETE /api/files/:id`
 - Chat: `GET|POST /api/channels`, `DELETE /api/channels/:id`, `GET|POST /api/channels/:id/messages`; private direct messages: `GET|POST /api/dms`, `GET|POST /api/dms/:id/messages` (only the two participants can read them)
 
-Remember to run `npm run db:migrate` after pulling these changes; migrations `003` and `004` add the new tables.
+Remember to run `npm run db:migrate` after pulling these changes; migrations `003`–`006` add the new tables.
 
 ## Production
 
