@@ -4,6 +4,7 @@ import { Avatar, Button, Field, IconButton, Menu, Modal, PageHeader, Pill, Segme
 import { api } from '../../lib/api.js'
 import { capitalize, formatDateTime, timeAgo } from '../../lib/format.js'
 import { useWorkspace } from '../context.js'
+import { INDUSTRIES, findIndustry } from '../../../shared/industries.js'
 
 const roleInfo = {
   owner: 'Full control, including billing and admins.',
@@ -44,7 +45,7 @@ function Profile() {
       const values = Object.fromEntries(new FormData(event.currentTarget).entries())
       const result = await api('/api/organization', { method: 'PUT', body: values })
       setOrganization(result.organization)
-      setAccount((current) => ({ ...current, organization: { ...current.organization, name: result.organization.name } }))
+      setAccount((current) => ({ ...current, organization: { ...current.organization, name: result.organization.name, industry: result.organization.industry } }))
       toast('Company profile saved')
     } catch (error) {
       toast(error.message, 'error')
@@ -62,7 +63,12 @@ function Profile() {
         <Field label="Business email"><input name="businessEmail" type="email" required defaultValue={organization.businessEmail} /></Field>
         <Field label="Website"><input name="website" maxLength={200} defaultValue={organization.website} placeholder="yourcompany.com" /></Field>
         <Field label="Phone"><input name="phone" maxLength={40} defaultValue={organization.phone} /></Field>
-        <Field label="Industry"><input name="industry" maxLength={120} defaultValue={organization.industry} /></Field>
+        <Field label="Business type" hint="Shapes your sidebar and suggested modules.">
+          <select name="industry" defaultValue={findIndustry(organization.industry)?.label || (organization.industry ? 'Other' : '')}>
+            <option value="" disabled>Choose…</option>
+            {INDUSTRIES.map((industry) => <option key={industry.key} value={industry.label}>{industry.label}</option>)}
+          </select>
+        </Field>
         <Field label="Address"><input name="address" maxLength={300} defaultValue={organization.address} /></Field>
       </fieldset>
       {isAdmin && <div className="card-foot"><button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save profile'}</button></div>}
@@ -299,7 +305,7 @@ function Security() {
       </form>
       <section className="card settings-card">
         <div className="card-head">
-          <div><h2>Active sessions</h2><p>Places where you’re signed in to Workora.</p></div>
+          <div><h2>Active sessions</h2><p>Places where you’re signed in to OVO.</p></div>
         </div>
         <ul className="session-list">
           {sessions.map((session) => (

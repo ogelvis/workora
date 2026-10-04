@@ -2,17 +2,14 @@ import { createContext, useCallback, useContext, useEffect, useId, useRef, useSt
 import Icon from './Icon.jsx'
 import { initials } from '../lib/format.js'
 
-export function BrandMark({ size = 34 }) {
-  return (
-    <span className="brand-symbol" style={{ width: size, height: size }} aria-hidden="true">
-      <i /><i /><i />
-    </span>
-  )
+// The OVO wordmark. `size` is the height in pixels; the logo is about three times as wide.
+export function BrandMark({ size = 28, label, white = false }) {
+  return <img className="brand-logo" src={white ? '/ovo-logo-white.png' : '/ovo-logo.png'} alt={label || ''} aria-hidden={label ? undefined : 'true'} height={size} style={{ height: size }} />
 }
 
 export function Avatar({ name, size = 'md' }) {
   // A stable soft tint per person, drawn from the brand's muted palette.
-  const tints = ['#dcefe6', '#e3e8f7', '#f4e6dc', '#efe2ea', '#e6eef0', '#f1ecd9']
+  const tints = ['#e1dcef', '#e3e8f7', '#f4e6dc', '#efe2ea', '#e8e7ef', '#f1ecd9']
   const index = [...(name || '')].reduce((sum, char) => sum + char.charCodeAt(0), 0) % tints.length
   return <span className={`avatar avatar-${size}`} style={{ background: tints[index] }} title={name}>{initials(name)}</span>
 }

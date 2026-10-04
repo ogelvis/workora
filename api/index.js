@@ -29,11 +29,11 @@ export default async function handler(request, response) {
     app = await loadApp()
   } catch (error) {
     appPromise = undefined
-    console.error('Workora API failed to start:', error)
+    console.error('OVO API failed to start:', error)
     response.statusCode = 500
     response.setHeader('Content-Type', 'application/json')
     response.end(JSON.stringify({
-      error: `Workora API is not configured: ${error.message} Set it under Vercel → Project → Settings → Environment Variables for this environment, then redeploy.`,
+      error: `OVO API is not configured: ${error.message} Set it under Vercel → Project → Settings → Environment Variables for this environment, then redeploy.`,
     }))
     return
   }

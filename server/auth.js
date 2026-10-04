@@ -1,7 +1,7 @@
 import { createHmac, randomBytes } from 'node:crypto'
 import { pool } from './db.js'
 
-const cookieName = 'workora_session'
+const cookieName = 'ovo_session'
 const sessionDays = Number(process.env.SESSION_TTL_DAYS || 7)
 const isProduction = process.env.NODE_ENV === 'production'
 
@@ -74,7 +74,7 @@ export async function requireAuth(request, response, next) {
 
   try {
     const result = await pool.query(
-      `SELECT s.id AS session_id, s.platform_admin, u.id, u.full_name, u.email, om.organization_id, o.name AS organization_name, om.role,
+      `SELECT s.id AS session_id, s.platform_admin, u.id, u.full_name, u.email, om.organization_id, o.name AS organization_name, o.industry AS organization_industry, om.role,
               sub.status AS subscription_status
        FROM user_sessions s
        JOIN users u ON u.id = s.user_id
@@ -98,6 +98,7 @@ export async function requireAuth(request, response, next) {
       email: row.email,
       organizationId: row.organization_id,
       organizationName: row.organization_name,
+      organizationIndustry: row.organization_industry || '',
       role: row.role,
       // Both conditions: the session came through the private sign-in, and the email is
       // still listed (removing it from PLATFORM_ADMIN_EMAILS revokes access immediately).
@@ -116,7 +117,7 @@ export async function requireAuth(request, response, next) {
     // but every workspace route is closed. Platform admins are never locked out.
     const authPath = request.originalUrl.startsWith('/api/auth/')
     if (row.subscription_status === 'suspended' && !authPath && !request.auth.platformAdmin) {
-      return response.status(403).json({ error: 'This workspace has been suspended. Please contact Workora support.', code: 'suspended' })
+      return response.status(403).json({ error: 'This workspace has been suspended. Please contact OVO support.', code: 'suspended' })
     }
     return next()
   } catch (error) {

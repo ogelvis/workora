@@ -23,7 +23,7 @@ try {
     await pool.query('DELETE FROM user_sessions WHERE user_id = $1', [updated.rows[0].id])
     console.log(`Password changed for ${address}.`)
   } else {
-    await pool.query('INSERT INTO users (full_name, email, password_hash) VALUES ($1, $2, $3)', ['Workora owner', address, passwordHash])
+    await pool.query('INSERT INTO users (full_name, email, password_hash) VALUES ($1, $2, $3)', ['OVO owner', address, passwordHash])
     console.log(`Created an owner account for ${address}.`)
   }
   console.log('Make sure this email is in PLATFORM_ADMIN_EMAILS, then sign in at your private address.')

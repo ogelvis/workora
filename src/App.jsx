@@ -30,7 +30,7 @@ function Suspended({ account, onSignedOut }) {
       <div className="suspended-card">
         <span className="empty-icon"><Icon name="alert" size={22} /></span>
         <h1>{account.organization.name} is suspended</h1>
-        <p>Access to this workspace has been paused, usually because of an outstanding payment. Your data is safe. Contact Workora support to restore access.</p>
+        <p>Access to this workspace has been paused, usually because of an outstanding payment. Your data is safe. Contact OVO support to restore access.</p>
         <button type="button" className="btn btn-secondary" onClick={() => window.location.reload()}>Check again</button>
         <button type="button" className="btn btn-dark" onClick={logout}>Log out</button>
       </div>
@@ -96,7 +96,7 @@ function App() {
     window.scrollTo({ top: 0 })
   }
 
-  if (checking) return <div className="boot" aria-label="Loading Workora"><span className="spinner" /></div>
+  if (checking) return <div className="boot" aria-label="Loading OVO"><span className="spinner" /></div>
 
   return (
     <ToastProvider>

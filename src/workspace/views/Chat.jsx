@@ -106,9 +106,15 @@ function Chat() {
     Promise.all([api('/api/channels'), loadConversations()])
       .then(([result]) => {
         setChannels(result.channels)
-        setActive((current) => current || (result.channels[0] ? { kind: 'channel', id: result.channels[0].id } : null))
+        // Deep links from search: #/chat?channel=<id> or #/chat?conversation=<id>
+        setActive((current) => current
+          || (params.conversation ? { kind: 'dm', id: params.conversation } : null)
+          || (params.channel && result.channels.some((item) => item.id === params.channel) ? { kind: 'channel', id: params.channel } : null)
+          || (result.channels[0] ? { kind: 'channel', id: result.channels[0].id } : null))
       })
       .catch((error) => toast(error.message, 'error'))
+    // Deep-link params are read once, on open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [toast, loadConversations])
 
   const openDirect = useCallback(async (userId) => {

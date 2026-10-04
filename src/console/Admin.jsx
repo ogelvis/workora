@@ -472,7 +472,7 @@ function Admin() {
 
   return (
     <div className="stack">
-      <PageHeader eyebrow="Platform / Super admin" title="Workora console" description="Every workspace on Workora: plans, payments, users and access.">
+      <PageHeader eyebrow="Platform / Super admin" title="OVO console" description="Every workspace on OVO: plans, payments, users and access.">
         <span className="vault-badge"><Icon name="shield" size={15} /> Platform admin</span>
       </PageHeader>
       <Segmented label="Console sections" value={tab} onChange={(next) => navigate('admin', { tab: next })} options={[

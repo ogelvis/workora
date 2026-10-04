@@ -4,8 +4,12 @@ import { Avatar, BrandMark, Confirm, IconButton, useToast } from '../components/
 import { RecordForm } from '../components/RecordForms.jsx'
 import { recordTypes } from '../lib/constants.js'
 import { api } from '../lib/api.js'
-import { capitalize, slug } from '../lib/format.js'
-import { ADMIN_ROLES, MANAGER_ROLES, WorkspaceContext, allowedViews, canSee, navigation, readHash } from './context.js'
+import { capitalize } from '../lib/format.js'
+import { ADMIN_ROLES, AREAS, MANAGER_ROLES, WorkspaceContext, allowedViews, buildNavigation, readHash } from './context.js'
+import { industryFor, itemName } from '../../shared/industries.js'
+import { CreateMenu, SearchPalette } from './Command.jsx'
+import Sheets, { NewSheetModal } from './views/Sheets.jsx'
+import Sheet from './views/Sheet.jsx'
 import Overview from './views/Overview.jsx'
 import Projects from './views/Projects.jsx'
 import Tasks from './views/Tasks.jsx'
@@ -18,11 +22,12 @@ import Notifications from './views/Notifications.jsx'
 import Billing from './views/Billing.jsx'
 import Settings from './views/Settings.jsx'
 import './workspace.css'
+import './ovo.css'
 
 const views = {
   overview: Overview, projects: Projects, tasks: Tasks, clients: Clients, campaigns: Campaigns,
   calendar: Calendar, files: Files, vault: Files, chat: Chat, notifications: Notifications,
-  billing: Billing, settings: Settings,
+  billing: Billing, settings: Settings, sheets: Sheets, sheet: Sheet,
 }
 
 // Which store collections each record type touches, so a save refreshes only what changed.
@@ -44,21 +49,37 @@ const loaders = {
   notifications: { path: '/api/notifications', pick: (data) => data.notifications },
   members: { path: '/api/members', pick: (data) => data.members },
   dms: { path: '/api/dms', pick: (data) => data.conversations },
+  sheets: { path: '/api/sheets', pick: (data) => data.sheets },
 }
 
 function Workspace({ account, setAccount, onSignedOut }) {
   const role = account.role
   const toast = useToast()
   const [route, setRoute] = useState(readHash)
-  const [data, setData] = useState({ clients: [], projects: [], tasks: [], campaigns: [], events: [], notifications: [], members: [], dms: [] })
+  const [data, setData] = useState({ clients: [], projects: [], tasks: [], campaigns: [], events: [], notifications: [], members: [], dms: [], sheets: [] })
   const [loaded, setLoaded] = useState(false)
   const [form, setForm] = useState(null)
   const [confirm, setConfirm] = useState(null)
   const [search, setSearch] = useState('')
   const [navOpen, setNavOpen] = useState(false)
+  const [searching, setSearching] = useState(false)
+  const [newSheet, setNewSheet] = useState(null)
+  const industry = industryFor(account.organization.industry)
 
   const allowed = useMemo(() => allowedViews(role), [role])
   const view = allowed.some((item) => item.key === route.view) ? route.view : 'overview'
+
+  // Ctrl/⌘ + K opens universal search from anywhere.
+  useEffect(() => {
+    function onKey(event) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setSearching(true)
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
 
   useEffect(() => {
     const onHash = () => {
@@ -165,7 +186,31 @@ function Workspace({ account, setAccount, onSignedOut }) {
     isManager: MANAGER_ROLES.includes(role), isAdmin: ADMIN_ROLES.includes(role),
   }
   const View = views[view]
-  const current = allowed.find((item) => item.key === view)
+  const groups = buildNavigation(role, industry, data.sheets)
+  const currentSheet = view === 'sheet' ? data.sheets.find((sheet) => sheet.id === route.params.id) : null
+  const currentLabel = currentSheet?.name || groups.flatMap((group) => group.items).find((item) => item.key === view)?.label || AREAS[view]?.label
+  const isActive = (item) => (item.view === 'sheet' ? view === 'sheet' && route.params.id === item.params.id : view === item.key)
+  const hrefFor = (item) => (item.view ? `#/${item.view}?${new URLSearchParams(item.params)}` : `#/${item.key}`)
+  const visibleCore = new Set(groups[0].items.map((item) => item.key))
+  const manager = MANAGER_ROLES.includes(role)
+
+  const createItems = [
+    { label: 'Work', items: [
+      visibleCore.has('clients') && { label: industry.clientLabel ? industry.clientLabel.replace(/s$/, '') : 'Client', icon: 'clients', tone: 'pink', onSelect: () => openForm('client') },
+      visibleCore.has('projects') && { label: 'Project', icon: 'projects', tone: 'blue', onSelect: () => openForm('project') },
+      { label: 'Task', icon: 'tasks', tone: 'green', onSelect: () => openForm('task') },
+      visibleCore.has('campaigns') && { label: 'Campaign', icon: 'campaigns', tone: 'orange', onSelect: () => openForm('campaign') },
+      { label: 'Event', icon: 'calendar', tone: 'amber', onSelect: () => openForm('event') },
+    ].filter(Boolean).filter(() => manager) },
+    { label: 'Records', items: [
+      ...data.sheets.filter((sheet) => sheet.pinned).slice(0, 6).map((sheet) => ({ label: itemName(sheet), icon: sheet.icon, tone: sheet.color, onSelect: () => navigate('sheet', { id: sheet.id, add: Date.now() }) })),
+      { label: 'New sheet', icon: 'sheet', tone: 'teal', onSelect: () => setNewSheet('') },
+    ] },
+    { label: 'Share', items: [
+      { label: 'Upload file', icon: 'upload', tone: 'sky', onSelect: () => navigate('files') },
+      { label: 'Message', icon: 'chat', tone: 'violet', onSelect: () => navigate('chat') },
+    ] },
+  ].filter((group) => group.items.length)
   const lookups = { clients: data.clients, projects: data.projects, members: data.members }
 
   return (
@@ -173,27 +218,34 @@ function Workspace({ account, setAccount, onSignedOut }) {
       <div className={`ws${navOpen ? ' nav-open' : ''}`}>
         <aside className="ws-sidebar" aria-label="Workspace navigation">
           <div className="ws-brand">
-            <BrandMark size={32} />
-            <div><strong>workora</strong><small>{account.organization.name}</small></div>
+            <BrandMark size={24} label="OVO" />
             <IconButton icon="close" label="Close menu" className="ws-nav-close" onClick={() => setNavOpen(false)} />
           </div>
+          <a href="#/settings" className="ws-org">
+            <span className="ws-org-mark">{account.organization.name.slice(0, 1).toUpperCase()}</span>
+            <span><strong>{account.organization.name}</strong><small>{industry.key === 'other' && !account.organization.industry ? 'Business workspace' : industry.label}</small></span>
+          </a>
           <nav className="ws-nav">
-            {navigation.map((group) => {
-              const items = group.items.filter((item) => canSee(item, role))
-              if (!items.length) return null
-              return (
-                <div key={group.section} className="ws-nav-group">
-                  <span className="ws-nav-label">{group.section}</span>
-                  {items.map((item) => (
-                    <a key={item.key} href={`#/${item.key}`} className={view === item.key ? 'active' : ''} aria-current={view === item.key ? 'page' : undefined}>
-                      <Icon name={item.icon} size={17} />
-                      <span>{item.label}</span>
-                      {counts[item.key] > 0 && <em className={['notifications', 'chat'].includes(item.key) ? 'dot-count' : ''}>{counts[item.key]}</em>}
-                    </a>
-                  ))}
-                </div>
-              )
-            })}
+            {groups.map((group) => (
+              <div key={group.section || 'main'} className="ws-nav-group">
+                {group.section && (
+                  <span className="ws-nav-label">
+                    {group.section}
+                    {group.module && <button type="button" className="ws-nav-add" aria-label="Add a module" title="Add a module" onClick={() => setNewSheet('')}><Icon name="plus" size={13} /></button>}
+                  </span>
+                )}
+                {group.items.map((item) => (
+                  <a key={item.key} href={hrefFor(item)} className={isActive(item) ? 'active' : ''} aria-current={isActive(item) ? 'page' : undefined}>
+                    <span className={`nav-icon tone-${item.tone}`}><Icon name={item.icon} size={15} /></span>
+                    <span>{item.label}</span>
+                    {counts[item.key] > 0 && <em className={['notifications', 'chat'].includes(item.key) ? 'dot-count' : ''}>{counts[item.key]}</em>}
+                  </a>
+                ))}
+                {group.module && !group.items.length && (
+                  <button type="button" className="ws-nav-empty" onClick={() => setNewSheet('')}><Icon name="plus" size={14} />Add a module</button>
+                )}
+              </div>
+            ))}
           </nav>
           <div className="ws-user">
             <Avatar name={account.user.fullName} />
@@ -210,18 +262,23 @@ function Workspace({ account, setAccount, onSignedOut }) {
           <header className="ws-topbar">
             <IconButton icon="menu" label="Open menu" className="ws-menu-btn" onClick={() => setNavOpen(true)} />
             <div className="ws-crumbs">
-              <span className="ws-crumb-dot" aria-hidden="true">✳</span>
-              <span>{slug(account.organization.name)}</span>
+              <span>{account.organization.name}</span>
               <Icon name="right" size={13} />
-              <strong>{current?.label}</strong>
+              <strong>{currentLabel}</strong>
             </div>
-            {['projects', 'tasks', 'clients', 'campaigns', 'files', 'vault'].includes(view) && (
+            <button type="button" className="ws-omni" onClick={() => setSearching(true)}>
+              <Icon name="search" size={16} />
+              <span>Search everything…</span>
+              <kbd>Ctrl K</kbd>
+            </button>
+            {['projects', 'tasks', 'clients', 'campaigns', 'files', 'vault', 'sheets'].includes(view) && (
               <label className="ws-search">
-                <Icon name="search" size={16} />
-                <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${current?.label.toLowerCase()}…`} aria-label={`Search ${current?.label}`} />
+                <Icon name="filter" size={15} />
+                <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Filter ${currentLabel?.toLowerCase()}…`} aria-label={`Filter ${currentLabel}`} />
               </label>
             )}
             <div className="ws-top-actions">
+              <CreateMenu items={createItems} />
               <a href="#/notifications" className="icon-btn ws-bell" aria-label={`Notifications${unread ? `, ${unread} unread` : ''}`}>
                 <Icon name="bell" size={17} />
                 {unread > 0 && <span className="badge-dot" />}
@@ -236,7 +293,7 @@ function Workspace({ account, setAccount, onSignedOut }) {
               <a href="#/billing">View plan</a>
             </div>
           )}
-          <main className="ws-content" key={view}>
+          <main className={`ws-content${view === 'sheet' ? ' ws-content-wide' : ''}`} key={view === 'sheet' ? `sheet-${route.params.id}` : view}>
             <View vault={view === 'vault'} />
           </main>
         </div>
@@ -251,6 +308,8 @@ function Workspace({ account, setAccount, onSignedOut }) {
         />
       )}
       {confirm && <Confirm {...confirm} onClose={() => setConfirm(null)} />}
+      {searching && <SearchPalette onClose={() => setSearching(false)} />}
+      {newSheet !== null && <NewSheetModal initialTemplate={newSheet} onClose={() => setNewSheet(null)} />}
     </WorkspaceContext.Provider>
   )
 }
