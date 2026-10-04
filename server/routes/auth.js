@@ -4,6 +4,8 @@ import rateLimit from 'express-rate-limit'
 import { z } from 'zod'
 import { pool } from '../db.js'
 import { adminPath, createSession, destroySession, hashToken, isPlatformAdmin, platformAdminEmails, requireAuth } from '../auth.js'
+import { seedIndustry } from './sheets.js'
+import { findIndustry } from '../../shared/industries.js'
 import {
   HttpError, emailSchema, getSubscription, logActivity, notify, passwordSchema, route,
   validationError, withTransaction,
@@ -21,6 +23,7 @@ const authLimiter = rateLimit({
 
 const registerSchema = z.object({
   organizationName: z.string().trim().min(2).max(160),
+  industry: z.string().trim().max(120).optional(),
   businessEmail: emailSchema,
   fullName: z.string().trim().min(2).max(120),
   email: emailSchema,
@@ -73,9 +76,10 @@ router.post('/register', authLimiter, route(async (request, response) => {
     // The owner's console account has no workspace yet; it can create one with its own password.
     const reuse = existing && !existing.has_workspace && await bcrypt.compare(values.password, existing.password_hash)
     if (existing && !reuse) throw new HttpError(409, 'An account with this email already exists. Sign in instead.')
+    const industry = findIndustry(values.industry)?.label || values.industry || ''
     const organization = await client.query(
-      'INSERT INTO organizations (name, business_email) VALUES ($1, $2) RETURNING id, name',
-      [values.organizationName, values.businessEmail.toLowerCase()],
+      'INSERT INTO organizations (name, business_email, industry) VALUES ($1, $2, $3) RETURNING id, name, industry',
+      [values.organizationName, values.businessEmail.toLowerCase(), industry],
     )
     const user = reuse
       ? await client.query('SELECT id, full_name, email FROM users WHERE id = $1', [existing.id])
@@ -99,6 +103,8 @@ router.post('/register', authLimiter, route(async (request, response) => {
        VALUES ($1, 'general', 'Company-wide conversation', $2)`,
       [organizationId, userId],
     )
+    // The workspace starts with the modules its industry needs.
+    await seedIndustry(client, { organizationId, userId, industry })
     const auth = { organizationId, userId }
     await logActivity(client, auth, 'created workspace', 'organization', organization.rows[0].name)
     return {
@@ -128,7 +134,7 @@ router.post('/login', authLimiter, route(async (request, response) => {
   // Sign-up already reveals whether an email is taken, so naming the problem here
   // costs nothing and saves people guessing.
   if (!row) {
-    return response.status(401).json({ error: 'No Workora account uses this email. Check the spelling or create a workspace.', code: 'no_account' })
+    return response.status(401).json({ error: 'No OVO account uses this email. Check the spelling or create a workspace.', code: 'no_account' })
   }
   if (!(await bcrypt.compare(parsed.data.password, row.password_hash))) {
     return response.status(401).json({ error: 'That password is incorrect. Ask your workspace admin for a reset link if you’ve forgotten it.', code: 'wrong_password' })
@@ -250,6 +256,7 @@ router.get('/me', requireAuth, route(async (request, response) => {
   const subscription = await getSubscription(pool, request.auth.organizationId)
   return response.json({
     ...accountPayload(request.auth),
+    organization: { id: request.auth.organizationId, name: request.auth.organizationName, industry: request.auth.organizationIndustry },
     platformAdmin: request.auth.platformAdmin,
     subscription: subscription && {
       plan: subscription.plan_name,
@@ -343,7 +350,7 @@ router.post('/accept-invite', authLimiter, route(async (request, response) => {
     )
     let userId
     if (existing.rowCount && existing.rows[0].has_workspace) {
-      throw new HttpError(409, 'This email already belongs to a Workora workspace. Sign in instead.')
+      throw new HttpError(409, 'This email already belongs to an OVO workspace. Sign in instead.')
     } else if (existing.rowCount) {
       userId = existing.rows[0].id
       await client.query('UPDATE users SET full_name = $1, password_hash = $2 WHERE id = $3', [values.fullName, passwordHash, userId])

@@ -5,14 +5,14 @@
 .gate-card > p { color: var(--muted); font-size: 0.86rem; margin: -10px 0 4px; }
 .gate-brand, .console-brand { align-items: center; display: flex; gap: 10px; }
 .gate-brand > span:last-child, .console-brand > span:last-child { color: var(--ink); display: flex; flex-direction: column; font-size: 1.15rem; font-weight: 800; letter-spacing: -0.05em; line-height: 1; }
-.gate-brand small, .console-brand small { color: var(--green); font-size: 0.55rem; font-weight: 800; letter-spacing: 0.2em; margin-top: 4px; }
+.gate-brand small, .console-brand small { color: var(--brand); font-size: 0.55rem; font-weight: 800; letter-spacing: 0.2em; margin-top: 4px; }
 .gate-submit { margin-top: 4px; min-height: 44px; }
 
 /* Console shell */
 .console { background: var(--bg); min-height: 100vh; }
 .console-bar {
   align-items: center;
-  background: rgba(246, 248, 247, 0.92);
+  background: rgba(247, 246, 251, 0.92);
   backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--line-soft);
   display: flex;
@@ -26,7 +26,7 @@
 }
 .console-user { align-items: center; display: flex; gap: 14px; }
 .console-user strong { color: var(--ink); font-size: 0.86rem; }
-.console-session { align-items: center; background: var(--ink); border-radius: 999px; color: var(--mint); display: inline-flex; font-size: 0.72rem; font-weight: 700; gap: 6px; padding: 5px 11px; }
+.console-session { align-items: center; background: var(--ink); border-radius: 999px; color: var(--brand-glow); display: inline-flex; font-size: 0.72rem; font-weight: 700; gap: 6px; padding: 5px 11px; }
 .console-content { margin: 0 auto; max-width: 1280px; padding: 30px 32px 64px; }
 
 @media (max-width: 760px) {
@@ -34,6 +34,6 @@
   .console-session, .console-user strong { display: none; }
   .console-content { padding: 22px 16px 48px; }
 }
-.gate > .spinner { border-color: rgba(255, 255, 255, 0.2); border-top-color: var(--mint); }
+.gate > .spinner { border-color: rgba(255, 255, 255, 0.2); border-top-color: var(--brand-glow); }
 .gate-note { color: var(--muted); font-size: 0.88rem; line-height: 1.6; margin: 0; }
 .gate-note code { background: var(--bg); border-radius: 6px; color: var(--ink); font-size: 0.82rem; margin: 0 4px; padding: 2px 6px; }

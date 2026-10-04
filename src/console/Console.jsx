@@ -47,7 +47,7 @@ export function ConsoleLogin({ path, onSignedIn }) {
     }
   }
 
-  const brand = <div className="gate-brand"><BrandMark size={36} /><span>workora<small>CONTROL</small></span></div>
+  const brand = <div className="gate-brand"><BrandMark size={34} label="OVO" /><span><small>CONTROL</small></span></div>
 
   if (mode === 'loading') {
     return <div className="gate"><span className="spinner" aria-label="Loading" /></div>
@@ -74,7 +74,7 @@ export function ConsoleLogin({ path, onSignedIn }) {
       <form className="gate-card" onSubmit={submit} key={mode}>
         {brand}
         <h1>{setup ? 'Set up owner access' : 'Owner sign-in'}</h1>
-        <p>{setup ? 'First time here: choose the password you’ll use to control Workora.' : 'Restricted access.'}</p>
+        <p>{setup ? 'First time here: choose the password you’ll use to control OVO.' : 'Restricted access.'}</p>
         {setup && <Field label="Your name"><input name="fullName" required minLength={2} autoComplete="name" autoFocus /></Field>}
         <Field label="Owner email"><input name="email" type="email" required autoComplete="username" autoFocus={!setup} /></Field>
         <Field label="Password" hint={setup ? 'At least 12 characters.' : undefined}>
@@ -121,7 +121,7 @@ export function ConsoleApp({ account, onSignedOut }) {
     <WorkspaceContext.Provider value={context}>
       <div className="console">
         <header className="console-bar">
-          <div className="console-brand"><BrandMark size={30} /><span>workora<small>CONTROL</small></span></div>
+          <div className="console-brand"><BrandMark size={28} label="OVO" /><span><small>CONTROL</small></span></div>
           <div className="console-user">
             <span className="console-session"><Icon name="shield" size={14} />Owner session · expires in 12 h</span>
             <strong>{account.user.fullName}</strong>

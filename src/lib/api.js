@@ -1,4 +1,4 @@
-const unavailable = 'Workora API is unavailable. Start the API server and check your database configuration.'
+const unavailable = 'OVO API is unavailable. Start the API server and check your database configuration.'
 
 // Explains a non-JSON reply, which comes from whatever sits in front of the API
 // (the Vite dev proxy or Vercel) rather than from the API itself.

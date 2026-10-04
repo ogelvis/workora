@@ -11,6 +11,8 @@ import adminRoutes, { publicRouter as publicRoutes } from './routes/admin.js'
 import authRoutes from './routes/auth.js'
 import chatRoutes from './routes/chat.js'
 import fileRoutes from './routes/files.js'
+import searchRoutes from './routes/search.js'
+import sheetRoutes from './routes/sheets.js'
 import teamRoutes from './routes/team.js'
 import workspaceRoutes from './routes/workspace.js'
 
@@ -26,13 +28,16 @@ const app = express()
 const isProduction = process.env.NODE_ENV === 'production'
 const rootDir = path.dirname(fileURLToPath(import.meta.url))
 const migrationsDir = path.join(rootDir, 'db', 'migrations')
-const LATEST_MIGRATION = '006_admin_sessions.sql'
+const LATEST_MIGRATION = '007_sheets.sql'
 
 app.disable('x-powered-by')
 app.set('trust proxy', 1)
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'same-site' } }))
 app.use(cookieParser())
-app.use(express.json({ limit: '64kb' }))
+// Sheet imports carry a whole spreadsheet; everything else stays small.
+const smallJson = express.json({ limit: '64kb' })
+const importJson = express.json({ limit: '4mb' })
+app.use((request, response, next) => (/^\/api\/sheets\/[^/]+\/import$/.test(request.path) ? importJson : smallJson)(request, response, next))
 app.use(express.urlencoded({ extended: false, limit: '16kb' }))
 app.use((request, response, next) => {
   if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method) && request.get('origin')) {
@@ -71,6 +76,8 @@ app.use('/api', workspaceRoutes)
 app.use('/api', teamRoutes)
 app.use('/api', fileRoutes)
 app.use('/api', chatRoutes)
+app.use('/api', sheetRoutes)
+app.use('/api', searchRoutes)
 app.use('/api', (_request, response) => response.status(404).json({ error: 'Not found.' }))
 
 const distDir = path.resolve(rootDir, '..', 'dist')

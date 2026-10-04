@@ -9,33 +9,46 @@ export function useWorkspace() {
 export const MANAGER_ROLES = ['owner', 'admin', 'manager']
 export const ADMIN_ROLES = ['owner', 'admin']
 
-export const navigation = [
-  { section: 'Workspace', items: [
-    { key: 'overview', label: 'Overview', icon: 'overview' },
-    { key: 'projects', label: 'Projects', icon: 'projects', roles: MANAGER_ROLES },
-    { key: 'tasks', label: 'Tasks', icon: 'tasks' },
-    { key: 'clients', label: 'Clients', icon: 'clients', roles: MANAGER_ROLES },
-    { key: 'campaigns', label: 'Campaigns', icon: 'campaigns', roles: MANAGER_ROLES },
-    { key: 'calendar', label: 'Calendar', icon: 'calendar' },
-  ] },
-  { section: 'Collaborate', items: [
-    { key: 'files', label: 'Files', icon: 'files' },
-    { key: 'vault', label: 'Document Vault', icon: 'vault', roles: ADMIN_ROLES },
-    { key: 'chat', label: 'Team chat', icon: 'chat' },
-    { key: 'notifications', label: 'Notifications', icon: 'bell' },
-  ] },
-  { section: 'Company', items: [
-    { key: 'billing', label: 'Billing', icon: 'billing', roles: ADMIN_ROLES },
-    { key: 'settings', label: 'Settings', icon: 'settings' },
-  ] },
-]
+// Every built-in area, with the colour it wears across OVO.
+export const AREAS = {
+  overview: { label: 'Home', icon: 'home', tone: 'violet' },
+  clients: { label: 'Clients', icon: 'clients', tone: 'pink', roles: MANAGER_ROLES },
+  projects: { label: 'Projects', icon: 'projects', tone: 'blue', roles: MANAGER_ROLES },
+  tasks: { label: 'Tasks', icon: 'tasks', tone: 'green' },
+  campaigns: { label: 'Campaigns', icon: 'campaigns', tone: 'orange', roles: MANAGER_ROLES },
+  calendar: { label: 'Calendar', icon: 'calendar', tone: 'amber' },
+  sheets: { label: 'Sheets', icon: 'sheet', tone: 'teal' },
+  sheet: { label: 'Sheet', icon: 'sheet', tone: 'teal', hidden: true },
+  files: { label: 'Files', icon: 'files', tone: 'sky' },
+  vault: { label: 'Document Vault', icon: 'vault', tone: 'indigo', roles: ADMIN_ROLES },
+  chat: { label: 'Messages', icon: 'chat', tone: 'violet' },
+  notifications: { label: 'Notifications', icon: 'bell', tone: 'rose' },
+  billing: { label: 'Billing', icon: 'billing', tone: 'slate', roles: ADMIN_ROLES },
+  settings: { label: 'Settings', icon: 'settings', tone: 'slate' },
+}
 
 export function canSee(item, role) {
   return !item.roles || item.roles.includes(role)
 }
 
+// The sidebar adapts to the business: its industry decides which areas lead, and its
+// pinned sheets become modules of their own.
+export function buildNavigation(role, industry, sheets = []) {
+  const area = (key) => ({ key, ...AREAS[key], ...(key === 'clients' && industry.clientLabel ? { label: industry.clientLabel } : {}) })
+  const visible = (items) => items.filter((item) => canSee(item, role))
+  const modules = sheets.filter((sheet) => sheet.pinned).map((sheet) => ({
+    key: `sheet:${sheet.id}`, view: 'sheet', params: { id: sheet.id }, label: sheet.name, icon: sheet.icon, tone: sheet.color, count: sheet.rowCount,
+  }))
+  return [
+    { section: '', items: visible([area('overview'), ...industry.core.map(area), area('sheets')]) },
+    { section: industry.key === 'other' ? 'Modules' : industry.label, items: modules, module: true },
+    { section: 'Collaborate', items: visible([area('chat'), area('files'), area('vault'), area('notifications')]) },
+    { section: 'Company', items: visible([area('billing'), area('settings')]) },
+  ].filter((group) => group.items.length || group.module)
+}
+
 export function allowedViews(role) {
-  return navigation.flatMap((group) => group.items).filter((item) => canSee(item, role))
+  return Object.entries(AREAS).filter(([, item]) => canSee(item, role)).map(([key, item]) => ({ key, ...item }))
 }
 
 export function readHash() {

@@ -1,6 +1,6 @@
-# Workora
+# OVO — One Vision. One Organization.
 
-Workora is a multi-tenant business workspace with a React/Vite client and an Express API backed by Neon PostgreSQL.
+OVO is a multi-tenant business operating platform that adapts to each organization's industry. It has a React/Vite client and an Express API backed by Neon PostgreSQL.
 
 ## Configure Neon
 
@@ -36,6 +36,11 @@ To use the local app, run `npm run dev:api` as well as `npm run dev`; the local 
 
 ## What's included
 
+- **Industry-shaped workspaces**: sign-up asks for the business type (Real Estate, Marketing Agency, Construction, Logistics, School, Technology, Healthcare, Legal, Finance, Hospitality, Retail, Manufacturing, Media, Church/Nonprofit, Professional Services, Other). The industry decides which core areas lead the sidebar and which module sheets the workspace starts with (for example Properties, Buyers & Tenants, Deals and Follow-ups for real estate). The catalogue lives in `shared/industries.js`, used by both the API and the app.
+- **OVO Sheets**: native business tables (spreadsheet + database). Column types: text, long text, number, money, date, status/choice (coloured), team member, checkbox, email, phone and link. Inline editing, add/rename/retype/reorder/delete columns, search, filters, sort, group by, hidden fields, saved views, bulk select, copy, duplicate (structure or with records), import from Excel (.xlsx) or CSV, export to Excel, CSV or print/PDF. Pinned sheets appear in the sidebar as modules. Each record has a details panel, an activity timeline and a comment thread.
+- **Smart home**: a greeting for the organization, colourful tiles for its modules and work, quick actions, and widgets (tasks, coming up, recently updated records, activity, chart, storage) each person can reorder or hide.
+- **Create button and universal search**: one Create menu everywhere, and Ctrl/⌘+K search across sheet records, clients, projects, tasks, people, sheets, files and messages, respecting each role's access.
+
 - **Accounts & teams**: registration creates the business, owner, 14-day Starter trial and a `#general` chat channel in one transaction. Owners and admins invite people with single-use links (7-day expiry), change roles, remove members and issue password-reset links (24-hour expiry). Everyone can change their password and sign out other sessions.
 - **Work**: projects (with client, status and task progress), tasks (assignee, priority, due date, board and list views, drag-and-drop status), clients, campaigns (budget, platforms, leads, conversions, revenue) and a month-view calendar. Everything can be created, edited and deleted.
 - **Collaboration**: company files organised by folder, an owners-and-admins-only Document Vault, team chat channels (refreshed every few seconds), and notifications for task assignment, task completion and new members.
@@ -54,7 +59,7 @@ To use the local app, run `npm run dev:api` as well as `npm run dev`; the local 
 The owner's control console has its own private sign-in at a secret address. Set these in Vercel's Environment Variables (Production) and redeploy:
 
 - `ADMIN_PATH`: the secret address, for example `MaryNgaji` gives `https://your-domain/MaryNgaji`. 6–64 letters, numbers, `-` or `_`. Without it the console is switched off. The path is checked on the server only and never appears in the public JavaScript.
-- `PLATFORM_ADMIN_EMAILS`: comma-separated emails allowed to sign in there. They must also have a normal Workora account.
+- `PLATFORM_ADMIN_EMAILS`: comma-separated emails allowed to sign in there. The first visit to the secret address lets a listed email choose its owner password; `npm run owner:password -- email "new password"` resets it from the command line.
 - `SUPPORT_EMAIL`: where customers' upgrade requests go (shown on the Billing page).
 
 Only sessions started through the secret address get console access, and they last 12 hours. Signing in on the normal page with an owner email opens that person's workspace only. Any other address shows the homepage, and checks of the secret address are rate-limited. The console has an overview (sign-ups, paying workspaces, monthly recurring revenue), workspace search with plan, payment ("paid until"), trial, suspension and deletion controls, user lookup with password-reset links, plan prices and limits, and an audit log of every admin action. Suspended workspaces are locked out until reactivated.
@@ -76,6 +81,8 @@ Plan prices live in the database (`subscription_plans`) and appear on the landin
 - Work: `GET /api/dashboard`; `GET|POST /api/clients`, `PUT|DELETE /api/clients/:id`; `GET|POST /api/projects`, `PUT|DELETE /api/projects/:id`; `GET|POST /api/tasks`, `PUT|PATCH|DELETE /api/tasks/:id`; `GET|POST /api/campaigns`, `PUT|DELETE /api/campaigns/:id`, `PATCH /api/campaigns/:id/status`; `GET|POST /api/calendar`, `PUT|DELETE /api/calendar/:id`
 - Notifications: `GET /api/notifications`, `PATCH /api/notifications/:id/read`, `POST /api/notifications/read-all`
 - Team: `GET /api/members`, `PATCH|DELETE /api/members/:userId`, `POST /api/members/:userId/reset-link`, `GET|POST /api/invitations`, `DELETE /api/invitations/:id`, `GET|PUT /api/organization`, `GET /api/billing`
+- Sheets: `GET|POST /api/sheets`, `GET|PUT|DELETE /api/sheets/:id`, `POST /api/sheets/:id/duplicate`, `POST /api/sheets/:id/rows`, `PATCH /api/sheets/:id/rows/:rowId`, `POST /api/sheets/:id/rows/delete`, `POST /api/sheets/:id/import`, `GET /api/sheets/:id/rows/:rowId/timeline`, `POST /api/sheets/:id/rows/:rowId/comments`, `GET /api/records/recent`
+- Search: `GET /api/search?q=`
 - Public: `GET /api/plans`
 - Owner sign-in: `GET /api/auth/gateway/:path`, `POST /api/auth/console-login`
 - Super admin (console sessions only): `GET /api/admin/overview`, `GET /api/admin/organizations`, `GET /api/admin/organizations/:id`, `PUT /api/admin/organizations/:id/subscription`, `DELETE /api/admin/organizations/:id`, `GET /api/admin/users`, `POST /api/admin/users/:id/reset-link`, `GET /api/admin/plans`, `PUT /api/admin/plans/:name`, `GET /api/admin/audit`

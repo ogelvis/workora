@@ -24,7 +24,7 @@ function Usage({ label, value, max, format = (number) => number }) {
 
 function upgradeLink(email, plan, account) {
   const subject = `Upgrade ${account.organization.name} to ${plan.name}`
-  const body = `Hello Workora,\n\nWe would like to move ${account.organization.name} to the ${plan.name} plan. Please send payment details.\n\n${account.user.fullName}\n${account.user.email}`
+  const body = `Hello OVO,\n\nWe would like to move ${account.organization.name} to the ${plan.name} plan. Please send payment details.\n\n${account.user.fullName}\n${account.user.email}`
   return `mailto:${email}?${new URLSearchParams({ subject, body }).toString().replace(/\+/g, '%20')}`
 }
 
@@ -71,7 +71,7 @@ function Billing() {
             <span>
               Plans are paid by bank transfer for now. {billing.supportEmail
                 ? <>Choose a plan below and we’ll reply from <strong>{billing.supportEmail}</strong> with payment details.</>
-                : 'Contact Workora to upgrade.'} No card is charged in the app.
+                : 'Contact OVO to upgrade.'} No card is charged in the app.
             </span>
           </div>
         </div>
@@ -104,7 +104,7 @@ function Billing() {
                   <li><Icon name="check" size={14} />{plan.projectLimit ? `${plan.projectLimit} projects` : 'Unlimited projects'}</li>
                 </ul>
                 {current || !billing.supportEmail
-                  ? <button type="button" disabled>{current ? 'Your current plan' : 'Contact Workora to switch'}</button>
+                  ? <button type="button" disabled>{current ? 'Your current plan' : 'Contact OVO to switch'}</button>
                   : <a className="plan-cta" href={upgradeLink(billing.supportEmail, plan, account)}>{plan.monthlyPrice === null ? 'Talk to us' : `Request ${plan.name}`}</a>}
               </article>
             )

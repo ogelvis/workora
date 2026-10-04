@@ -152,7 +152,7 @@ router.post('/invitations', adminsOnly, route(async (request, response) => {
       `SELECT 1 FROM users u JOIN organization_members om ON om.user_id = u.id WHERE u.email = $1`,
       [email],
     )
-    if (existing.rowCount) throw new HttpError(409, 'This person already belongs to a Workora workspace.')
+    if (existing.rowCount) throw new HttpError(409, 'This person already belongs to an OVO workspace.')
     // Re-inviting the same email replaces the earlier link.
     await client.query(
       'DELETE FROM invitations WHERE organization_id = $1 AND email = $2 AND accepted_at IS NULL',

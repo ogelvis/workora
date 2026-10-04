@@ -4,7 +4,7 @@ import { pool } from './db.js'
 
 const port = Number(process.env.PORT || 3001)
 const server = app.listen(port, () => {
-  console.log(`Workora API listening on port ${port}`)
+  console.log(`OVO API listening on port ${port}`)
 })
 
 async function shutdown() {

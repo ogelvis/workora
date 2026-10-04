@@ -9,7 +9,7 @@ const priorityTone = { Low: 'muted', Medium: 'neutral', High: 'warning', Urgent:
 
 function readView() {
   try {
-    return localStorage.getItem('workora.tasks.view') || 'board'
+    return localStorage.getItem('ovo.tasks.view') || 'board'
   } catch {
     return 'board'
   }
@@ -70,7 +70,7 @@ function Tasks() {
   function changeLayout(next) {
     setLayout(next)
     try {
-      localStorage.setItem('workora.tasks.view', next)
+      localStorage.setItem('ovo.tasks.view', next)
     } catch {
       // Remembering the layout is a convenience only.
     }
