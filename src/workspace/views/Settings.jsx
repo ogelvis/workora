@@ -248,7 +248,8 @@ function Team() {
 }
 
 function Security() {
-  const { toast } = useWorkspace()
+  const { toast, account, setAccount } = useWorkspace()
+  const firstPassword = account.passwordSet === false
   const [sessions, setSessions] = useState([])
   const [busy, setBusy] = useState(false)
 
@@ -274,7 +275,8 @@ function Security() {
       await api('/api/auth/change-password', { method: 'POST', body: { currentPassword: values.currentPassword, newPassword: values.newPassword } })
       form.reset()
       await loadSessions()
-      toast('Password changed. Other devices were signed out.')
+      if (firstPassword) setAccount((current) => ({ ...current, passwordSet: true }))
+      toast(firstPassword ? 'Password set. You can now sign in with your email and password.' : 'Password changed. Other devices were signed out.')
     } catch (error) {
       toast(error.message, 'error')
     } finally {
@@ -295,13 +297,13 @@ function Security() {
   return (
     <div className="grid-1-1">
       <form className="card settings-card" onSubmit={changePassword}>
-        <div className="card-head"><div><h2>Change password</h2><p>Use at least 12 characters. Other devices will be signed out.</p></div></div>
+        <div className="card-head"><div><h2>{firstPassword ? 'Choose your password' : 'Change password'}</h2><p>{firstPassword ? `You signed in with your welcome link. Choose a password (at least 12 characters) to sign in as ${account.user.email} from now on.` : 'Use at least 12 characters. Other devices will be signed out.'}</p></div></div>
         <fieldset disabled={busy} className="form-grid single">
-          <Field label="Current password"><input name="currentPassword" type="password" required autoComplete="current-password" /></Field>
+          {!firstPassword && <Field label="Current password"><input name="currentPassword" type="password" required autoComplete="current-password" /></Field>}
           <Field label="New password"><input name="newPassword" type="password" required minLength={12} maxLength={128} autoComplete="new-password" /></Field>
           <Field label="Confirm new password"><input name="confirmPassword" type="password" required minLength={12} maxLength={128} autoComplete="new-password" /></Field>
         </fieldset>
-        <div className="card-foot"><button type="submit" className="btn btn-primary" disabled={busy}>{busy ? 'Updating…' : 'Update password'}</button></div>
+        <div className="card-foot"><button type="submit" className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : firstPassword ? 'Set password' : 'Update password'}</button></div>
       </form>
       <section className="card settings-card">
         <div className="card-head">

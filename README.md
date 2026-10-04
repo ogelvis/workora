@@ -64,6 +64,12 @@ The owner's control console has its own private sign-in at a secret address. Set
 
 Only sessions started through the secret address get console access, and they last 12 hours. Signing in on the normal page with an owner email opens that person's workspace only. Any other address shows the homepage, and checks of the secret address are rate-limited. The console has an overview (sign-ups, paying workspaces, monthly recurring revenue), workspace search with plan, payment ("paid until"), trial, suspension and deletion controls, user lookup with password-reset links, plan prices and limits, and an audit log of every admin action. Suspended workspaces are locked out until reactivated.
 
+### Partner businesses
+
+In the console, **Workspaces → Add partner business** creates a workspace (with its industry modules, plan and access), its owner account without a password, and emails the owner a one-time link (valid 7 days). Clicking it signs them straight into their dashboard; a banner then asks them to choose a password under Settings → Security. **Send sign-in link** on any workspace issues a fresh link (older unused links stop working). If email isn't configured, the console shows the link to copy and send manually.
+
+Email settings (Vercel → Environment Variables, then redeploy): `EMAIL_FROM` (e.g. `OVO <hello@workora.truxpylot.com>`) plus either `RESEND_API_KEY`, or `SMTP_HOST`, `SMTP_PORT` (465 or 587), `SMTP_USER`, `SMTP_PASS` from your email hosting.
+
 Plan prices live in the database (`subscription_plans`) and appear on the landing page and Billing page. Migration `004_platform_admin_pricing.sql` seeds the suggested launch prices; change them any time under **Super admin → Plans & pricing**.
 
 ## Roles

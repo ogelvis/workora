@@ -1,8 +1,13 @@
+import { randomBytes } from 'node:crypto'
+import bcrypt from 'bcryptjs'
 import express from 'express'
 import { z } from 'zod'
 import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
-import { HttpError, appUrl, createToken, route, validationError, withTransaction } from '../lib.js'
+import { HttpError, appUrl, createToken, emailSchema, route, validationError, withTransaction } from '../lib.js'
+import { emailConfigured, sendMail, welcomeEmail } from '../mail.js'
+import { findIndustry } from '../../shared/industries.js'
+import { seedIndustry } from './sheets.js'
 
 // Public plan catalogue for the landing page.
 export const publicRouter = express.Router()
@@ -55,10 +60,11 @@ function audit(db, auth, action, targetType, target, details = {}) {
 }
 
 const orgSelect = `
-  SELECT o.id, o.name, o.business_email AS "businessEmail", o.industry, o.created_at AS "createdAt",
+  SELECT o.id, o.name, o.business_email AS "businessEmail", o.industry, o.partner, o.created_at AS "createdAt",
          sp.name AS plan, s.status, s.trial_ends_at AS "trialEndsAt", s.current_period_end AS "currentPeriodEnd",
          s.billing_notes AS "billingNotes", sp.monthly_price::float AS "monthlyPrice", sp.currency,
-         owner.full_name AS "ownerName", owner.email AS "ownerEmail",
+         owner.full_name AS "ownerName", owner.email AS "ownerEmail", owner.id AS "ownerId",
+         owner.password_set AS "ownerPasswordSet", owner.email_verified_at AS "ownerVerifiedAt",
          (SELECT count(*)::int FROM organization_members m WHERE m.organization_id = o.id) AS members,
          (SELECT count(*)::int FROM projects p WHERE p.organization_id = o.id) AS projects,
          (SELECT COALESCE(sum(size_bytes), 0)::float FROM files f WHERE f.organization_id = o.id) AS "storageBytes",
@@ -68,7 +74,7 @@ const orgSelect = `
   LEFT JOIN subscriptions s ON s.organization_id = o.id
   LEFT JOIN subscription_plans sp ON sp.id = s.plan_id
   LEFT JOIN LATERAL (
-    SELECT u.full_name, u.email FROM organization_members om JOIN users u ON u.id = om.user_id
+    SELECT u.id, u.full_name, u.email, u.password_set, u.email_verified_at FROM organization_members om JOIN users u ON u.id = om.user_id
     WHERE om.organization_id = o.id AND om.role = 'owner' ORDER BY om.created_at LIMIT 1
   ) owner ON true`
 
@@ -199,6 +205,108 @@ router.delete('/organizations/:id', route(async (request, response) => {
     await audit(client, request.auth, 'deleted workspace', 'workspace', organization.rows[0], { removedUsers: orphanIds.length })
   })
   return response.status(204).end()
+}))
+
+// ---------------------------------------------------------------- Partner businesses
+
+const WELCOME_DAYS = 7
+
+const partnerSchema = z.object({
+  businessName: z.string().trim().min(2).max(160),
+  industry: z.string().trim().max(120).optional(),
+  contactName: z.string().trim().min(2).max(120),
+  email: emailSchema,
+  businessEmail: z.union([emailSchema, z.literal('')]).optional(),
+  plan: z.string().trim().min(1).max(60),
+  status: z.enum(['active', 'trial']),
+  paidUntil: z.iso.datetime({ offset: true }).nullable().optional(),
+  billingNotes: z.string().trim().max(2000).optional(),
+})
+
+// A single-use link that signs the owner straight into their workspace, then emails it.
+async function issueWelcome(db, request, { userId, organizationId, fullName, email, organizationName }) {
+  const { token, tokenHash } = createToken()
+  const expiresAt = new Date(Date.now() + WELCOME_DAYS * 24 * 60 * 60 * 1000)
+  // A new link replaces any unused older one.
+  await db.query('UPDATE welcome_links SET used_at = now() WHERE user_id = $1 AND used_at IS NULL', [userId])
+  await db.query(
+    'INSERT INTO welcome_links (user_id, organization_id, token_hash, created_by, expires_at) VALUES ($1, $2, $3, $4, $5)',
+    [userId, organizationId, tokenHash, request.auth.userId, expiresAt],
+  )
+  const link = appUrl(request, `/?welcome=${token}`)
+  return { link, expiresAt, send: () => sendMail({ to: email, ...welcomeEmail({ fullName, organizationName, link, expiresAt }) }) }
+}
+
+router.get('/email-status', route(async (_request, response) => {
+  return response.json({ configured: emailConfigured() })
+}))
+
+router.post('/partners', route(async (request, response) => {
+  const parsed = partnerSchema.safeParse(request.body)
+  if (!parsed.success) return validationError(response, parsed.error)
+  const values = parsed.data
+  const email = values.email.toLowerCase()
+  const industry = findIndustry(values.industry)?.label || values.industry || ''
+  const created = await withTransaction(async (client) => {
+    const existing = await client.query('SELECT 1 FROM users WHERE email = $1', [email])
+    if (existing.rowCount) throw new HttpError(409, 'Someone already uses this email on OVO. Use a different contact email.')
+    const plan = await client.query('SELECT id FROM subscription_plans WHERE name = $1', [values.plan])
+    if (!plan.rowCount) throw new HttpError(400, 'That plan does not exist.')
+    const organization = await client.query(
+      'INSERT INTO organizations (name, business_email, industry, partner) VALUES ($1, $2, $3, true) RETURNING id, name',
+      [values.businessName, (values.businessEmail || email).toLowerCase(), industry],
+    )
+    // No password yet: the owner signs in through the emailed link and chooses one inside.
+    const unusable = await bcrypt.hash(randomBytes(32).toString('base64url'), 10)
+    const user = await client.query(
+      'INSERT INTO users (full_name, email, password_hash, password_set) VALUES ($1, $2, $3, false) RETURNING id',
+      [values.contactName, email, unusable],
+    )
+    const organizationId = organization.rows[0].id
+    const userId = user.rows[0].id
+    await client.query(`INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, 'owner')`, [organizationId, userId])
+    await client.query(
+      `INSERT INTO subscriptions (organization_id, plan_id, status, trial_ends_at, current_period_end, billing_notes)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [organizationId, plan.rows[0].id, values.status,
+        values.status === 'trial' ? new Date(Date.now() + 14 * 86_400_000) : null,
+        values.status === 'active' ? values.paidUntil || null : null,
+        values.billingNotes || 'Partner business added by OVO.'],
+    )
+    await client.query(
+      `INSERT INTO chat_channels (organization_id, name, description, created_by) VALUES ($1, 'general', 'Company-wide conversation', $2)`,
+      [organizationId, userId],
+    )
+    await seedIndustry(client, { organizationId, userId, industry })
+    await client.query(
+      `INSERT INTO activity_logs (organization_id, user_id, action, object_type, object_name) VALUES ($1, $2, 'created workspace', 'organization', $3)`,
+      [organizationId, userId, values.businessName],
+    )
+    const welcome = await issueWelcome(client, request, { userId, organizationId, fullName: values.contactName, email, organizationName: values.businessName })
+    await audit(client, request.auth, 'added partner business', 'workspace', organization.rows[0], { owner: email, plan: values.plan, status: values.status })
+    return { organizationId, welcome }
+  })
+  const delivery = await created.welcome.send()
+  const result = await pool.query(`${orgSelect} WHERE o.id = $1`, [created.organizationId])
+  return response.status(201).json({
+    organization: result.rows[0], link: created.welcome.link, expiresAt: created.welcome.expiresAt,
+    emailSent: delivery.sent, emailError: delivery.reason || null,
+  })
+}))
+
+router.post('/organizations/:id/welcome-link', route(async (request, response) => {
+  z.uuid().parse(request.params.id)
+  const result = await pool.query(`${orgSelect} WHERE o.id = $1`, [request.params.id])
+  const organization = result.rows[0]
+  if (!organization) throw new HttpError(404, 'Workspace not found.')
+  if (!organization.ownerId) throw new HttpError(400, 'This workspace has no owner to send a link to.')
+  const welcome = await issueWelcome(pool, request, {
+    userId: organization.ownerId, organizationId: organization.id, fullName: organization.ownerName,
+    email: organization.ownerEmail, organizationName: organization.name,
+  })
+  const delivery = await welcome.send()
+  await audit(pool, request.auth, 'sent sign-in link', 'workspace', organization, { owner: organization.ownerEmail, emailed: delivery.sent })
+  return response.status(201).json({ link: welcome.link, expiresAt: welcome.expiresAt, emailSent: delivery.sent, emailError: delivery.reason || null })
 }))
 
 router.get('/users', route(async (request, response) => {
