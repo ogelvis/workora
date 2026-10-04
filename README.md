@@ -86,7 +86,7 @@ Remember to run `npm run db:migrate` after pulling these changes; migrations `00
 
 ## Production
 
-The Vercel project can build the Vite frontend and deploy the Express API function in `api/[...path].js` from the connected Git repository. Set `DATABASE_URL` and `SESSION_SECRET` in the Vercel project's Environment Variables for both Production and Preview. Use the pooled Neon connection URL for `DATABASE_URL`; the Neon integration may also expose an unpooled URL under a different variable name. The application specifically reads `DATABASE_URL`.
+The Vercel project can build the Vite frontend and deploy the Express API function in `api/index.js`; `vercel.json` rewrites every `/api/*` path to it (passing the original path), because catch-all file names such as `[...path].js` do not reach every path depth outside Next.js. Set `DATABASE_URL` and `SESSION_SECRET` in the Vercel project's Environment Variables for both Production and Preview. Use the pooled Neon connection URL for `DATABASE_URL`; the Neon integration may also expose an unpooled URL under a different variable name. The application specifically reads `DATABASE_URL`.
 
 Apply database migrations once per database before using a deployment by running `npm run db:migrate` in an environment with that database's `DATABASE_URL`. Vercel does not automatically run this script during a frontend build. The deployment health endpoint is `/api/health`; a successful response includes `"database":"connected"`. Do not expose database connection strings or session secrets in client-side `VITE_*` variables.
 
