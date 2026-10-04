@@ -53,7 +53,8 @@ export function formatBytes(bytes) {
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
   const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
   const value = bytes / 1024 ** exponent
-  return `${value.toFixed(exponent === 0 || value >= 100 ? 0 : 1)} ${units[exponent]}`
+  const digits = exponent === 0 || value >= 100 || Number.isInteger(value) ? 0 : 1
+  return `${value.toFixed(digits)} ${units[exponent]}`
 }
 
 export function formatMoney(value) {
@@ -86,4 +87,13 @@ export function toLocalInput(value) {
 
 export function capitalize(text = '') {
   return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+export function formatPrice(amount, currency = 'NGN') {
+  if (amount === null || amount === undefined) return null
+  try {
+    return new Intl.NumberFormat(undefined, { style: 'currency', currency, currencyDisplay: 'narrowSymbol', maximumFractionDigits: 0 }).format(amount)
+  } catch {
+    return `${currency} ${Number(amount).toLocaleString()}`
+  }
 }

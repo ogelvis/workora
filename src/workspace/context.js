@@ -24,14 +24,22 @@ export const navigation = [
     { key: 'chat', label: 'Team chat', icon: 'chat' },
     { key: 'notifications', label: 'Notifications', icon: 'bell' },
   ] },
+  { section: 'Platform', items: [
+    { key: 'admin', label: 'Super admin', icon: 'shield', platformOnly: true },
+  ] },
   { section: 'Company', items: [
     { key: 'billing', label: 'Billing', icon: 'billing', roles: ADMIN_ROLES },
     { key: 'settings', label: 'Settings', icon: 'settings' },
   ] },
 ]
 
-export function allowedViews(role) {
-  return navigation.flatMap((group) => group.items).filter((item) => !item.roles || item.roles.includes(role))
+export function canSee(item, role, platformAdmin) {
+  if (item.platformOnly) return platformAdmin
+  return !item.roles || item.roles.includes(role)
+}
+
+export function allowedViews(role, platformAdmin) {
+  return navigation.flatMap((group) => group.items).filter((item) => canSee(item, role, platformAdmin))
 }
 
 export function readHash() {

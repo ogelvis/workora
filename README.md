@@ -49,6 +49,12 @@ To use the local app, run `npm run dev:api` as well as `npm run dev`; the local 
 - **Payments**: plans can't be purchased or changed in the app.
 - **File storage**: files are stored in PostgreSQL, up to 4 MB each, because Vercel functions accept request bodies of up to 4.5 MB. For larger files or heavy use, move storage to an object store such as Vercel Blob or S3.
 
+## Super admin (platform owner)
+
+Set `PLATFORM_ADMIN_EMAILS` (comma-separated) in Vercel's Environment Variables and redeploy. Anyone signed in with one of those emails sees **Super admin** in the sidebar: an overview of every workspace (sign-ups, paying workspaces, monthly recurring revenue), a searchable workspace list where you can change plans, record payments ("paid until"), extend trials, suspend or delete workspaces, a user list with password-reset links, plan prices and limits, and an audit log of every admin action. Suspended workspaces are locked out until reactivated. Set `SUPPORT_EMAIL` so customers can request upgrades from their Billing page.
+
+Plan prices live in the database (`subscription_plans`) and appear on the landing page and Billing page. Migration `004_platform_admin_pricing.sql` seeds the suggested launch prices; change them any time under **Super admin → Plans & pricing**.
+
 ## Roles
 
 | Role | Can do |
@@ -64,10 +70,12 @@ To use the local app, run `npm run dev:api` as well as `npm run dev`; the local 
 - Work: `GET /api/dashboard`; `GET|POST /api/clients`, `PUT|DELETE /api/clients/:id`; `GET|POST /api/projects`, `PUT|DELETE /api/projects/:id`; `GET|POST /api/tasks`, `PUT|PATCH|DELETE /api/tasks/:id`; `GET|POST /api/campaigns`, `PUT|DELETE /api/campaigns/:id`, `PATCH /api/campaigns/:id/status`; `GET|POST /api/calendar`, `PUT|DELETE /api/calendar/:id`
 - Notifications: `GET /api/notifications`, `PATCH /api/notifications/:id/read`, `POST /api/notifications/read-all`
 - Team: `GET /api/members`, `PATCH|DELETE /api/members/:userId`, `POST /api/members/:userId/reset-link`, `GET|POST /api/invitations`, `DELETE /api/invitations/:id`, `GET|PUT /api/organization`, `GET /api/billing`
+- Public: `GET /api/plans`
+- Super admin (requires `PLATFORM_ADMIN_EMAILS`): `GET /api/admin/overview`, `GET /api/admin/organizations`, `GET /api/admin/organizations/:id`, `PUT /api/admin/organizations/:id/subscription`, `DELETE /api/admin/organizations/:id`, `GET /api/admin/users`, `POST /api/admin/users/:id/reset-link`, `GET /api/admin/plans`, `PUT /api/admin/plans/:name`, `GET /api/admin/audit`
 - Files: `GET|POST /api/files`, `GET /api/files/:id/download`, `DELETE /api/files/:id`
 - Chat: `GET|POST /api/channels`, `DELETE /api/channels/:id`, `GET|POST /api/channels/:id/messages`
 
-Remember to run `npm run db:migrate` after pulling these changes; migration `003_team_files_chat_profile.sql` adds the new tables.
+Remember to run `npm run db:migrate` after pulling these changes; migrations `003` and `004` add the new tables.
 
 ## Production
 

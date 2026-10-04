@@ -19,6 +19,16 @@ export function sessionCookieOptions(maxAge) {
   }
 }
 
+// Platform (super) admins are named by email in an environment variable, so the
+// role can only be granted by whoever controls the deployment's settings.
+export function isPlatformAdmin(email) {
+  const admins = (process.env.PLATFORM_ADMIN_EMAILS || '')
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+  return admins.includes(String(email).toLowerCase())
+}
+
 export function hashToken(token) {
   return createHmac('sha256', process.env.SESSION_SECRET).update(token).digest()
 }
@@ -49,11 +59,13 @@ export async function requireAuth(request, response, next) {
 
   try {
     const result = await pool.query(
-      `SELECT s.id AS session_id, u.id, u.full_name, u.email, om.organization_id, o.name AS organization_name, om.role
+      `SELECT s.id AS session_id, u.id, u.full_name, u.email, om.organization_id, o.name AS organization_name, om.role,
+              sub.status AS subscription_status
        FROM user_sessions s
        JOIN users u ON u.id = s.user_id
        JOIN organization_members om ON om.user_id = u.id
        JOIN organizations o ON o.id = om.organization_id
+       LEFT JOIN subscriptions sub ON sub.organization_id = om.organization_id
        WHERE s.token_hash = $1 AND s.expires_at > now()
        ORDER BY om.created_at ASC
        LIMIT 1`,
@@ -72,6 +84,14 @@ export async function requireAuth(request, response, next) {
       organizationId: row.organization_id,
       organizationName: row.organization_name,
       role: row.role,
+      platformAdmin: isPlatformAdmin(row.email),
+      subscriptionStatus: row.subscription_status,
+    }
+    // A suspended workspace can still sign in and out (so the app can explain why),
+    // but every workspace route is closed. Platform admins are never locked out.
+    const authPath = request.originalUrl.startsWith('/api/auth/')
+    if (row.subscription_status === 'suspended' && !authPath && !request.auth.platformAdmin) {
+      return response.status(403).json({ error: 'This workspace has been suspended. Please contact Workora support.', code: 'suspended' })
     }
     return next()
   } catch (error) {

@@ -87,7 +87,8 @@ export function createToken() {
 
 export async function getSubscription(db, organizationId, { lock = false } = {}) {
   const result = await db.query(
-    `SELECT s.status, s.trial_ends_at, sp.name AS plan_name, sp.user_limit, sp.storage_limit_bytes, sp.project_limit
+    `SELECT s.status, s.trial_ends_at, s.current_period_end, sp.name AS plan_name, sp.user_limit, sp.storage_limit_bytes, sp.project_limit,
+            sp.monthly_price::float AS monthly_price, sp.yearly_price::float AS yearly_price, sp.currency
      FROM subscriptions s
      JOIN subscription_plans sp ON sp.id = s.plan_id
      WHERE s.organization_id = $1

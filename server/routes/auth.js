@@ -137,11 +137,13 @@ router.get('/me', requireAuth, route(async (request, response) => {
   const subscription = await getSubscription(pool, request.auth.organizationId)
   return response.json({
     ...accountPayload(request.auth),
+    platformAdmin: request.auth.platformAdmin,
     subscription: subscription && {
       plan: subscription.plan_name,
       status: subscription.status,
       trialEndsAt: subscription.trial_ends_at,
       trialExpired: subscription.trialExpired,
+      currentPeriodEnd: subscription.current_period_end,
     },
   })
 }))

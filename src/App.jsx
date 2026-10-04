@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import LandingPage from './LandingPage.jsx'
 import AuthScreen from './AuthScreen.jsx'
 import Workspace from './workspace/Workspace.jsx'
+import Icon from './components/Icon.jsx'
 import { ToastProvider } from './components/ui.jsx'
 import { api } from './lib/api.js'
 
@@ -13,6 +14,27 @@ function readLinkToken() {
     if (token) return { mode, token }
   }
   return null
+}
+
+function Suspended({ account, onSignedOut }) {
+  async function logout() {
+    try {
+      await api('/api/auth/logout', { method: 'POST' })
+    } finally {
+      onSignedOut()
+    }
+  }
+  return (
+    <div className="suspended">
+      <div className="suspended-card">
+        <span className="empty-icon"><Icon name="alert" size={22} /></span>
+        <h1>{account.organization.name} is suspended</h1>
+        <p>Access to this workspace has been paused, usually because of an outstanding payment. Your data is safe. Contact Workora support to restore access.</p>
+        <button type="button" className="btn btn-secondary" onClick={() => window.location.reload()}>Check again</button>
+        <button type="button" className="btn btn-dark" onClick={logout}>Log out</button>
+      </div>
+    </div>
+  )
 }
 
 function App() {
@@ -59,7 +81,9 @@ function App() {
 
   return (
     <ToastProvider>
-      {account ? (
+      {account && account.subscription?.status === 'suspended' && !account.platformAdmin ? (
+        <Suspended account={account} onSignedOut={signedOut} />
+      ) : account ? (
         <Workspace account={account} setAccount={setAccount} onSignedOut={signedOut} />
       ) : screen === 'landing' ? (
         <LandingPage onGetStarted={() => openAuth('register')} onLogin={() => openAuth('login')} />

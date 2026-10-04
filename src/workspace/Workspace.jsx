@@ -5,7 +5,7 @@ import { RecordForm } from '../components/RecordForms.jsx'
 import { recordTypes } from '../lib/constants.js'
 import { api } from '../lib/api.js'
 import { capitalize, slug } from '../lib/format.js'
-import { ADMIN_ROLES, MANAGER_ROLES, WorkspaceContext, allowedViews, navigation, readHash } from './context.js'
+import { ADMIN_ROLES, MANAGER_ROLES, WorkspaceContext, allowedViews, canSee, navigation, readHash } from './context.js'
 import Overview from './views/Overview.jsx'
 import Projects from './views/Projects.jsx'
 import Tasks from './views/Tasks.jsx'
@@ -17,12 +17,13 @@ import Chat from './views/Chat.jsx'
 import Notifications from './views/Notifications.jsx'
 import Billing from './views/Billing.jsx'
 import Settings from './views/Settings.jsx'
+import Admin from './views/Admin.jsx'
 import './workspace.css'
 
 const views = {
   overview: Overview, projects: Projects, tasks: Tasks, clients: Clients, campaigns: Campaigns,
   calendar: Calendar, files: Files, vault: Files, chat: Chat, notifications: Notifications,
-  billing: Billing, settings: Settings,
+  billing: Billing, settings: Settings, admin: Admin,
 }
 
 // Which store collections each record type touches, so a save refreshes only what changed.
@@ -56,7 +57,8 @@ function Workspace({ account, setAccount, onSignedOut }) {
   const [search, setSearch] = useState('')
   const [navOpen, setNavOpen] = useState(false)
 
-  const allowed = useMemo(() => allowedViews(role), [role])
+  const platformAdmin = Boolean(account.platformAdmin)
+  const allowed = useMemo(() => allowedViews(role, platformAdmin), [role, platformAdmin])
   const view = allowed.some((item) => item.key === route.view) ? route.view : 'overview'
 
   useEffect(() => {
@@ -177,7 +179,7 @@ function Workspace({ account, setAccount, onSignedOut }) {
           </div>
           <nav className="ws-nav">
             {navigation.map((group) => {
-              const items = group.items.filter((item) => !item.roles || item.roles.includes(role))
+              const items = group.items.filter((item) => canSee(item, role, platformAdmin))
               if (!items.length) return null
               return (
                 <div key={group.section} className="ws-nav-group">

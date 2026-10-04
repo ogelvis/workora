@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import './LandingPage.css'
+import { formatBytes, formatPrice } from './lib/format.js'
 
 const previewTabs = [
   { key: 'overview', label: 'Overview' },
@@ -70,6 +71,33 @@ function LandingPage({ onGetStarted, onLogin }) {
   const [activeTab, setActiveTab] = useState('overview')
   const [menuOpen, setMenuOpen] = useState(false)
   const [year] = useState(() => new Date().getFullYear())
+  const [plans, setPlans] = useState({})
+
+  // Prices and limits are managed in the super-admin console; fall back to the copy below if the API is unreachable.
+  useEffect(() => {
+    fetch('/api/plans')
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => data && setPlans(Object.fromEntries(data.plans.map((plan) => [plan.name, plan]))))
+      .catch(() => {})
+  }, [])
+
+  function price(name) {
+    const plan = plans[name]
+    if (!plan) return null
+    return (
+      <div className="lp-plan-price">
+        {plan.monthlyPrice !== null ? <><strong>{formatPrice(plan.monthlyPrice, plan.currency)}</strong><span>/ month</span></> : <strong>Custom</strong>}
+        {plan.yearlyPrice !== null && <small>or {formatPrice(plan.yearlyPrice, plan.currency)} billed yearly</small>}
+      </div>
+    )
+  }
+
+  function limits(name, fallbackMembers, fallbackStorage) {
+    const plan = plans[name]
+    const members = !plan ? fallbackMembers : plan.userLimit >= 2147483647 ? 'Unlimited members' : `Workspace for up to ${plan.userLimit} members`
+    const storage = plan ? `${formatBytes(plan.storageLimitBytes)} storage` : fallbackStorage
+    return <><div className="lp-plan-feature"><span>✓</span> {members}</div><div className="lp-plan-feature"><span>✓</span> {storage}</div></>
+  }
 
   useEffect(() => {
     const targets = document.querySelectorAll('.lp-reveal')
@@ -195,11 +223,11 @@ function LandingPage({ onGetStarted, onLogin }) {
       <section className="lp-pricing-section" id="pricing">
         <div className="lp-pricing-heading lp-reveal"><div className="lp-section-label"><span>06</span> ROOM TO GROW</div><h2>A workspace that grows<br />with <em>your business.</em></h2><p>Start with a private business workspace, then choose a plan that fits your team as you grow.</p></div>
         <div className="lp-plan-grid">
-          <article className="lp-plan lp-reveal"><span className="lp-plan-label">A PLACE TO START</span><h3>Starter</h3><p>For small teams bringing their work together.</p><div className="lp-plan-feature"><span>✓</span> Workspace for up to 5 members</div><div className="lp-plan-feature"><span>✓</span> Up to 25 GB storage</div><div className="lp-plan-feature"><span>✓</span> Core projects and file organization</div><button type="button" onClick={onGetStarted}>Explore Starter <span>↗</span></button></article>
-          <article className="lp-plan lp-plan-featured lp-reveal"><span className="lp-plan-label">FOR TEAMS IN MOTION</span><h3>Business</h3><p>More room and capabilities for growing teams.</p><div className="lp-plan-feature"><span>✓</span> Workspace for up to 25 members</div><div className="lp-plan-feature"><span>✓</span> Up to 100 GB storage</div><div className="lp-plan-feature"><span>✓</span> CRM, campaigns and Document Vault</div><button type="button" onClick={onGetStarted}>Explore Business <span>↗</span></button></article>
-          <article className="lp-plan lp-reveal"><span className="lp-plan-label">BUILT AROUND YOU</span><h3>Enterprise</h3><p>Room for larger teams and advanced needs.</p><div className="lp-plan-feature"><span>✓</span> Expanded team and storage limits</div><div className="lp-plan-feature"><span>✓</span> Advanced administration</div><div className="lp-plan-feature"><span>✓</span> Tailored workspace requirements</div><button type="button" onClick={onGetStarted}>Talk to our team <span>↗</span></button></article>
+          <article className="lp-plan lp-reveal"><span className="lp-plan-label">A PLACE TO START</span><h3>Starter</h3><p>For small teams bringing their work together.</p>{price('Starter')}{limits('Starter', 'Workspace for up to 5 members', 'Up to 5 GB storage')}<div className="lp-plan-feature"><span>✓</span> Core projects and file organization</div><button type="button" onClick={onGetStarted}>Explore Starter <span>↗</span></button></article>
+          <article className="lp-plan lp-plan-featured lp-reveal"><span className="lp-plan-label">FOR TEAMS IN MOTION</span><h3>Business</h3><p>More room and capabilities for growing teams.</p>{price('Business')}{limits('Business', 'Workspace for up to 25 members', 'Up to 50 GB storage')}<div className="lp-plan-feature"><span>✓</span> CRM, campaigns and Document Vault</div><button type="button" onClick={onGetStarted}>Explore Business <span>↗</span></button></article>
+          <article className="lp-plan lp-reveal"><span className="lp-plan-label">BUILT AROUND YOU</span><h3>Enterprise</h3><p>Room for larger teams and advanced needs.</p>{price('Enterprise')}<div className="lp-plan-feature"><span>✓</span> Expanded team and storage limits</div><div className="lp-plan-feature"><span>✓</span> Advanced administration</div><div className="lp-plan-feature"><span>✓</span> Tailored workspace requirements</div><button type="button" onClick={onGetStarted}>Talk to our team <span>↗</span></button></article>
         </div>
-        <p className="lp-pricing-footnote">Every workspace starts on a 14-day Starter trial with these limits applied. Online payments are not connected yet, so upgrades are not available and no payment is taken.</p>
+        <p className="lp-pricing-footnote">Every workspace starts with a free 14-day Starter trial. No card needed to sign up; paid plans are invoiced and paid by bank transfer.</p>
       </section>
 
       <section className="lp-cta-section lp-reveal">
