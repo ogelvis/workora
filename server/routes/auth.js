@@ -3,7 +3,7 @@ import express from 'express'
 import rateLimit from 'express-rate-limit'
 import { z } from 'zod'
 import { pool } from '../db.js'
-import { adminPath, createSession, destroySession, hashToken, isPlatformAdmin, requireAuth } from '../auth.js'
+import { adminPath, createSession, destroySession, hashToken, isPlatformAdmin, platformAdminEmails, requireAuth } from '../auth.js'
 import {
   HttpError, emailSchema, getSubscription, logActivity, notify, passwordSchema, route,
   validationError, withTransaction,
@@ -155,15 +155,24 @@ router.get('/gateway/:path', gatewayLimiter, (request, response) => {
 
 router.post('/console-login', authLimiter, route(async (request, response) => {
   const parsed = loginSchema.extend(gatewaySchema.shape).safeParse(request.body)
-  const invalid = () => response.status(401).json({ error: 'Email or password is incorrect.' })
-  if (!parsed.success || !isGatewayPath(parsed.data.path)) return invalid()
+  // The person signing in always sees the same message; the real reason goes to the
+  // server log (Vercel → Logs) so the owner can diagnose a misconfiguration.
+  const invalid = (reason) => {
+    console.warn(`Console sign-in refused: ${reason}`)
+    return response.status(401).json({ error: 'Email or password is incorrect.' })
+  }
+  if (!parsed.success) return invalid('the form was incomplete or the email was not valid')
+  if (!isGatewayPath(parsed.data.path)) return invalid('the sign-in page address does not match ADMIN_PATH')
   const email = parsed.data.email.toLowerCase()
-  if (!isPlatformAdmin(email)) return invalid()
+  if (!isPlatformAdmin(email)) {
+    return invalid(`this email is not in PLATFORM_ADMIN_EMAILS (${platformAdminEmails().length} address(es) configured)`)
+  }
   const result = await pool.query('SELECT id, password_hash FROM users WHERE email = $1', [email])
   const user = result.rows[0]
-  if (!user || !(await bcrypt.compare(parsed.data.password, user.password_hash))) return invalid()
+  if (!user) return invalid('no Workora account uses this email yet; sign up on the homepage first')
+  if (!(await bcrypt.compare(parsed.data.password, user.password_hash))) return invalid('wrong password')
   const member = await pool.query('SELECT 1 FROM organization_members WHERE user_id = $1', [user.id])
-  if (!member.rowCount) return invalid()
+  if (!member.rowCount) return invalid('this account does not belong to any workspace')
   await createSession(user.id, response, { platformAdmin: true })
   await pool.query(
     `INSERT INTO admin_audit_log (admin_user_id, admin_email, action, target_type, target_name)

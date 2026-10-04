@@ -21,12 +21,15 @@ export function sessionCookieOptions(maxAge) {
 
 // Platform (super) admins are named by email in an environment variable, so the
 // role can only be granted by whoever controls the deployment's settings.
+// Accepts the list however it was typed into the dashboard: commas, semicolons, spaces or
+// new lines between addresses, quotes, "Name <email>" or "mailto:" prefixes.
+export function platformAdminEmails() {
+  const matches = (process.env.PLATFORM_ADMIN_EMAILS || '').match(/[^\s,;<>"'`:]+@[^\s,;<>"'`]+/g) || []
+  return matches.map((value) => value.toLowerCase().replace(/\.+$/, ''))
+}
+
 export function isPlatformAdmin(email) {
-  const admins = (process.env.PLATFORM_ADMIN_EMAILS || '')
-    .split(',')
-    .map((value) => value.trim().toLowerCase())
-    .filter(Boolean)
-  return admins.includes(String(email).toLowerCase())
+  return platformAdminEmails().includes(String(email).trim().toLowerCase())
 }
 
 // The owner's private sign-in lives at a secret path set in ADMIN_PATH. The path is
