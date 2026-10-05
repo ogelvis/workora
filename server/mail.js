@@ -85,3 +85,31 @@ One Vision. One Organization.`
   </td></tr></table></body></html>`
   return { subject: `Your OVO workspace for ${organizationName} is ready`, text, html }
 }
+
+export function ownerResetEmail({ fullName, link }) {
+  const first = (fullName || 'there').split(' ')[0]
+  const text = `Hello ${first},
+
+Someone asked to reset the password for the OVO owner console.
+
+Choose a new password: ${link}
+
+The link works once and expires in 1 hour. If you didn't ask for this, ignore this email; your password stays the same.
+
+— OVO`
+  const html = `<!doctype html><html><body style="margin:0;background:#f7f6fb;font-family:Segoe UI,Arial,sans-serif;color:#1c1a33">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:32px 12px"><tr><td align="center">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:18px;overflow:hidden;border:1px solid #e6e3f0">
+      <tr><td style="background:#14112b;padding:24px 32px;color:#ffffff">
+        <div style="font-size:24px;font-weight:800;letter-spacing:-1px">OVO <span style="font-size:11px;letter-spacing:2px;color:#c9b8ff;font-weight:700">CONTROL</span></div>
+      </td></tr>
+      <tr><td style="padding:30px 32px">
+        <h1 style="font-size:20px;margin:0 0 12px">Reset your owner password</h1>
+        <p style="font-size:15px;line-height:1.6;margin:0 0 22px">Hello ${escape(first)}, use the button below to choose a new password for the OVO owner console.</p>
+        <a href="${escape(link)}" style="display:inline-block;background:#5b2ef0;color:#ffffff;text-decoration:none;font-weight:700;padding:14px 26px;border-radius:11px;font-size:15px">Choose a new password</a>
+        <p style="font-size:13px;line-height:1.6;color:#6b6883;margin:22px 0 0">The link works once and expires in 1 hour. If you didn't ask for this, you can ignore this email — your password stays the same.</p>
+      </td></tr>
+    </table>
+  </td></tr></table></body></html>`
+  return { subject: 'Reset your OVO owner password', text, html }
+}
