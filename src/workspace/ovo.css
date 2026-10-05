@@ -546,3 +546,13 @@ button.chip { border: 0; }
 .pref-row strong { color: var(--ink); font-size: 0.9rem; }
 .pref-row small { color: var(--muted); font-size: 0.8rem; line-height: 1.45; }
 .settings-section { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+
+/* Accept-terms screen */
+.terms-card { display: flex; flex-direction: column; gap: 14px; text-align: left; }
+.terms-card .empty-icon { align-self: center; background: var(--brand-soft); color: var(--brand); }
+.terms-card h1 { font-size: 1.35rem; margin: 0; text-align: center; }
+.terms-card p { color: var(--muted); font-size: 0.9rem; line-height: 1.55; margin: 0; text-align: center; }
+.terms-links { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }
+.terms-links a { align-items: center; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); display: flex; font-size: 0.86rem; font-weight: 650; gap: 8px; justify-content: center; padding: 11px; text-decoration: none; }
+.terms-links a:hover { border-color: var(--brand); color: var(--brand); }
+.terms-card .btn { justify-content: center; margin: 0; width: 100%; }

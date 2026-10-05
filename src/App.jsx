@@ -8,6 +8,8 @@ import { ToastProvider } from './components/ui.jsx'
 import { api } from './lib/api.js'
 import PublicForm from './public/PublicForm.jsx'
 import PublicShare from './public/PublicShare.jsx'
+import Legal from './public/Legal.jsx'
+import { TERMS_VERSION } from '../shared/legal.js'
 
 // Invite, reset and partner welcome links arrive as ?invite=…, ?reset=… or ?welcome=…;
 // read them once, then clean the URL.
@@ -28,6 +30,51 @@ const EMAIL_CHANGE_MESSAGES = {
 }
 function readEmailChange() {
   return EMAIL_CHANGE_MESSAGES[new URLSearchParams(window.location.search).get('email-change')] || null
+}
+
+// Anyone who joined before the current terms (or was added by OVO) accepts them once before continuing.
+function TermsGate({ account, onAccepted, onSignedOut }) {
+  const [checked, setChecked] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  async function accept() {
+    setBusy(true)
+    setError('')
+    try {
+      await api('/api/auth/accept-terms', { method: 'POST', body: { version: account.termsVersion || TERMS_VERSION } })
+      onAccepted()
+    } catch (requestError) {
+      setError(requestError.message)
+      setBusy(false)
+    }
+  }
+  async function logout() {
+    try {
+      await api('/api/auth/logout', { method: 'POST' })
+    } finally {
+      onSignedOut()
+    }
+  }
+  return (
+    <div className="suspended">
+      <div className="suspended-card terms-card">
+        <span className="empty-icon"><Icon name="scale" size={22} /></span>
+        <h1>Please review our terms</h1>
+        <p>To keep using OVO, please read and accept our Terms of Use and Privacy Policy. They explain how OVO works, what you can expect from us and how we protect your data.</p>
+        <div className="terms-links">
+          <a href="/terms" target="_blank" rel="noreferrer"><Icon name="notes" size={16} />Terms of Use</a>
+          <a href="/privacy" target="_blank" rel="noreferrer"><Icon name="shield" size={16} />Privacy Policy</a>
+        </div>
+        <label className="auth-terms">
+          <input type="checkbox" checked={checked} onChange={(event) => setChecked(event.target.checked)} />
+          <span>I have read and agree to the Terms of Use and Privacy Policy.</span>
+        </label>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <button type="button" className="btn btn-primary" disabled={!checked || busy} onClick={accept}>{busy ? 'Saving…' : 'Accept and continue'}</button>
+        <button type="button" className="btn btn-secondary" onClick={logout}>Log out</button>
+      </div>
+    </div>
+  )
 }
 
 function Suspended({ account, onSignedOut }) {
@@ -94,6 +141,8 @@ function readPublicPage() {
 
 function App() {
   const [publicPage] = useState(readPublicPage)
+  const [legalPage] = useState(() => window.location.pathname.match(/^\/(terms|privacy)\/?$/)?.[1])
+  if (legalPage) return <Legal page={legalPage} />
   if (publicPage?.kind === 'f') return <PublicForm token={publicPage.token} />
   if (publicPage?.kind === 's') return <PublicShare token={publicPage.token} />
   return <Main />
@@ -173,6 +222,8 @@ function Main() {
         <ConsoleLogin path={entryPath} onSignedIn={authenticated} />
       ) : account && account.subscription?.status === 'suspended' ? (
         <Suspended account={account} onSignedOut={signedOut} />
+      ) : account && account.termsAccepted === false ? (
+        <TermsGate account={account} onAccepted={() => setAccount((current) => ({ ...current, termsAccepted: true }))} onSignedOut={signedOut} />
       ) : account ? (
         <Workspace account={account} setAccount={setAccount} onSignedOut={signedOut} />
       ) : screen === 'landing' ? (

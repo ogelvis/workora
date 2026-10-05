@@ -45,6 +45,13 @@ function AuthScreen({ mode, setMode, token, onAuthenticated, onBack, initialNoti
       return
     }
     delete values.confirmPassword
+    if (['register', 'invite'].includes(mode)) {
+      if (!values.acceptTerms) {
+        setError('Please accept the Terms of Use and Privacy Policy to continue.')
+        return
+      }
+      values.acceptTerms = true
+    }
     setBusy(true)
     try {
       if (mode === 'login') onAuthenticated(await api('/api/auth/login', { method: 'POST', body: values }))
@@ -157,6 +164,12 @@ function AuthScreen({ mode, setMode, token, onAuthenticated, onBack, initialNoti
                 <input name="password" type="password" required minLength={mode === 'login' ? 1 : 12} maxLength={128} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
               </Field>
               {mode !== 'login' && <Field label="Confirm password"><input name="confirmPassword" type="password" required minLength={12} maxLength={128} autoComplete="new-password" /></Field>}
+              {['register', 'invite'].includes(mode) && (
+                <label className="auth-terms">
+                  <input type="checkbox" name="acceptTerms" required />
+                  <span>I agree to OVO’s <a href="/terms" target="_blank" rel="noreferrer">Terms of Use</a> and <a href="/privacy" target="_blank" rel="noreferrer">Privacy Policy</a>.</span>
+                </label>
+              )}
               {mode === 'login' && <button type="button" className="auth-link" onClick={() => switchMode('forgot')}>Forgot password?</button>}
               {error && <p className="form-error" role="alert">{error}</p>}
               <button type="submit" className="auth-submit" disabled={busy}>
