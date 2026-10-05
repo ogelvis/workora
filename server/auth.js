@@ -44,11 +44,12 @@ export function hashToken(token) {
   return createHmac('sha256', process.env.SESSION_SECRET).update(token).digest()
 }
 
-const ADMIN_SESSION_MS = 12 * 60 * 60 * 1000
+// The owner console stays signed in for 30 days on a device (sign out to end it sooner).
+const ADMIN_SESSION_MS = 30 * 24 * 60 * 60 * 1000
 
 export async function createSession(userId, response, { platformAdmin = false } = {}) {
   const token = randomBytes(32).toString('base64url')
-  // Console sessions are short-lived; workspace sessions last SESSION_TTL_DAYS.
+  // Console sessions last 30 days; workspace sessions last SESSION_TTL_DAYS.
   const maxAge = platformAdmin ? ADMIN_SESSION_MS : sessionDays * 24 * 60 * 60 * 1000
   const expiresAt = new Date(Date.now() + maxAge)
   await pool.query(

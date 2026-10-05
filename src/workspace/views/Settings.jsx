@@ -324,17 +324,123 @@ function Security() {
   )
 }
 
+function Account() {
+  const { account, setAccount, reload, toast, navigate } = useWorkspace()
+  const [savingName, setSavingName] = useState(false)
+  const [changing, setChanging] = useState(false)
+  const [pending, setPending] = useState('')
+  const needsPassword = account.passwordSet === false
+
+  async function toggleProductUpdates(event) {
+    const productUpdates = event.target.checked
+    try {
+      await api('/api/auth/profile', { method: 'PUT', body: { productUpdates } })
+      setAccount((current) => ({ ...current, productUpdates }))
+      toast(productUpdates ? 'You’ll get OVO product updates by email' : 'You won’t get product update emails')
+    } catch (error) {
+      toast(error.message, 'error')
+    }
+  }
+
+  async function saveName(event) {
+    event.preventDefault()
+    setSavingName(true)
+    try {
+      const { fullName } = Object.fromEntries(new FormData(event.currentTarget).entries())
+      const result = await api('/api/auth/profile', { method: 'PUT', body: { fullName } })
+      setAccount((current) => ({ ...current, user: { ...current.user, fullName: result.user.fullName } }))
+      reload(['members'])
+      toast('Your name was saved')
+    } catch (error) {
+      toast(error.message, 'error')
+    } finally {
+      setSavingName(false)
+    }
+  }
+
+  async function changeEmail(event) {
+    event.preventDefault()
+    const form = event.currentTarget
+    const values = Object.fromEntries(new FormData(form).entries())
+    if (values.newEmail.trim().toLowerCase() !== values.confirmEmail.trim().toLowerCase()) {
+      toast('The two email addresses don’t match.', 'error')
+      return
+    }
+    setChanging(true)
+    try {
+      const result = await api('/api/auth/change-email', { method: 'POST', body: { newEmail: values.newEmail, currentPassword: values.currentPassword } })
+      form.reset()
+      if (result.pending) {
+        setPending(result.email)
+        toast(`Check ${result.email} for a confirmation link`)
+      } else {
+        setAccount((current) => ({ ...current, user: { ...current.user, email: result.user.email } }))
+        reload(['members'])
+        toast(`Your sign-in email is now ${result.user.email}`)
+      }
+    } catch (error) {
+      toast(error.message, 'error')
+    } finally {
+      setChanging(false)
+    }
+  }
+
+  return (
+    <div className="grid-1-1">
+      <form className="card settings-card" onSubmit={saveName}>
+        <div className="card-head"><div><h2>Your details</h2><p>How you appear to your team across OVO.</p></div></div>
+        <div className="account-id">
+          <Avatar name={account.user.fullName} size="lg" />
+          <div><strong>{account.user.fullName}</strong><small>{account.user.email} · {capitalize(account.role)}</small></div>
+        </div>
+        <fieldset disabled={savingName} className="form-grid single">
+          <Field label="Full name"><input name="fullName" required minLength={2} maxLength={120} defaultValue={account.user.fullName} autoComplete="name" /></Field>
+        </fieldset>
+        <div className="settings-section">
+          <span className="field-label">Emails from OVO</span>
+          <label className="pref-row">
+            <input type="checkbox" checked={account.productUpdates !== false} onChange={toggleProductUpdates} />
+            <span><strong>Product updates</strong><small>New features and improvements. Policy, security and service notices are always sent, because they affect your account.</small></span>
+          </label>
+        </div>
+        <div className="card-foot"><button type="submit" className="btn btn-primary" disabled={savingName}>{savingName ? 'Saving…' : 'Save name'}</button></div>
+      </form>
+      <form className="card settings-card" onSubmit={changeEmail}>
+        <div className="card-head"><div><h2>Sign-in email</h2><p>You currently sign in as <strong>{account.user.email}</strong>.</p></div></div>
+        {pending && (
+          <div className="notice notice-info"><Icon name="mail" size={16} /><span>We sent a confirmation link to <strong>{pending}</strong>. Your email changes when you click it (within 24 hours). Until then, keep signing in with {account.user.email}.</span></div>
+        )}
+        {needsPassword ? (
+          <div className="notice notice-warning">
+            <Icon name="key" size={16} />
+            <span>Choose a password first, then you can change your email. <button type="button" className="text-link" onClick={() => navigate('settings', { tab: 'security' })}>Set a password</button></span>
+          </div>
+        ) : (
+          <fieldset disabled={changing} className="form-grid single">
+            <Field label="New email"><input name="newEmail" type="email" required maxLength={254} autoComplete="email" placeholder="you@company.com" /></Field>
+            <Field label="Type the new email again"><input name="confirmEmail" type="email" required maxLength={254} autoComplete="off" /></Field>
+            <Field label="Your current password" hint="To keep your account safe."><input name="currentPassword" type="password" required maxLength={128} autoComplete="current-password" /></Field>
+          </fieldset>
+        )}
+        {!needsPassword && <div className="card-foot"><button type="submit" className="btn btn-primary" disabled={changing}>{changing ? 'Saving…' : 'Change email'}</button></div>}
+      </form>
+    </div>
+  )
+}
+
 function Settings() {
   const { params, navigate } = useWorkspace()
-  const tab = ['profile', 'team', 'security'].includes(params.tab) ? params.tab : 'profile'
+  const tab = ['account', 'profile', 'team', 'security'].includes(params.tab) ? params.tab : 'account'
   return (
     <div className="stack">
-      <PageHeader eyebrow="Company / Settings" title="Settings" description="Your company profile, team and account security." />
+      <PageHeader eyebrow="Company / Settings" title="Settings" description="Your account, company profile, team and security." />
       <Segmented label="Settings sections" value={tab} onChange={(next) => navigate('settings', { tab: next })} options={[
+        { value: 'account', label: 'My account', icon: 'clients' },
         { value: 'profile', label: 'Company profile', icon: 'building' },
         { value: 'team', label: 'Team', icon: 'team' },
         { value: 'security', label: 'Security', icon: 'shield' },
       ]} />
+      {tab === 'account' && <Account />}
       {tab === 'profile' && <Profile />}
       {tab === 'team' && <Team />}
       {tab === 'security' && <Security />}

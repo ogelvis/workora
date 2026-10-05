@@ -6,6 +6,7 @@ import { WorkspaceContext, readHash } from '../workspace/context.js'
 import {
   AccountSection, AddPartner, AuditSection, OverviewSection, PlansSection, SystemSection, UsersSection, WorkspacesSection,
 } from './Admin.jsx'
+import { AnnouncementsSection } from './Announcements.jsx'
 import './console.css'
 
 // A reset link arrives as /<private path>#reset=<token>; read it once and clear it from the address bar.
@@ -157,6 +158,7 @@ const SECTIONS = [
     { key: 'workspaces', label: 'Workspaces', icon: 'building', tone: 'blue' },
     { key: 'partners', label: 'Partners', icon: 'deal', tone: 'pink' },
     { key: 'users', label: 'People', icon: 'team', tone: 'teal' },
+    { key: 'announcements', label: 'Announcements', icon: 'bell', tone: 'rose' },
   ] },
   { group: 'Business', items: [
     { key: 'plans', label: 'Plans & pricing', icon: 'billing', tone: 'amber' },
@@ -195,7 +197,7 @@ export function ConsoleApp({ account, onSignedOut }) {
   }, [])
   const go = useCallback((tab, extra = {}) => navigate('admin', { tab, ...extra }), [navigate])
 
-  // A console session that ends (12 hours, or signed out elsewhere) returns to the sign-in.
+  // A console session that ends (after 30 days, or signed out elsewhere) returns to the sign-in.
   const expired = useCallback(() => {
     toast('Your owner session has ended. Please sign in again.', 'error')
     onSignedOut()
@@ -241,7 +243,7 @@ export function ConsoleApp({ account, onSignedOut }) {
           <button type="button" className="cx-add" onClick={addPartner}><Icon name="plus" size={16} />Add partner business</button>
           <div className="cx-me">
             <Avatar name={account.user.fullName} size="sm" />
-            <div><strong>{account.user.fullName}</strong><small>Owner · 12-hour session</small></div>
+            <div><strong>{account.user.fullName}</strong><small>Owner · stays signed in 30 days</small></div>
             <button type="button" className="cx-logout" aria-label="Sign out" title="Sign out" onClick={logout}><Icon name="logout" size={17} /></button>
           </div>
         </aside>
@@ -258,6 +260,7 @@ export function ConsoleApp({ account, onSignedOut }) {
             {section === 'workspaces' && <WorkspacesSection onAddPartner={addPartner} refreshKey={refreshKey} />}
             {section === 'partners' && <WorkspacesSection partnersOnly onAddPartner={addPartner} refreshKey={refreshKey} />}
             {section === 'users' && <UsersSection />}
+            {section === 'announcements' && <AnnouncementsSection />}
             {section === 'plans' && <PlansSection />}
             {section === 'audit' && <AuditSection />}
             {section === 'account' && <AccountSection />}

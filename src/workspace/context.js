@@ -25,6 +25,7 @@ export const AREAS = {
   vault: { label: 'Document Vault', icon: 'vault', tone: 'indigo', roles: ADMIN_ROLES },
   chat: { label: 'Messages', icon: 'chat', tone: 'violet' },
   notifications: { label: 'Notifications', icon: 'bell', tone: 'rose' },
+  updates: { label: 'What’s new', icon: 'sparkle', tone: 'violet', hidden: true },
   billing: { label: 'Billing', icon: 'billing', tone: 'slate', roles: ADMIN_ROLES },
   settings: { label: 'Settings', icon: 'settings', tone: 'slate' },
 }

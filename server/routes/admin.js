@@ -6,7 +6,7 @@ import { pool } from '../db.js'
 import { adminPath, platformAdminEmails, requireAuth } from '../auth.js'
 import { pendingMigrations } from '../migrations.js'
 import { HttpError, appUrl, createToken, emailSchema, route, validationError, withTransaction } from '../lib.js'
-import { emailConfigured, sendMail, welcomeEmail } from '../mail.js'
+import { ANNOUNCEMENT_CATEGORIES, announcementEmail, emailConfigured, sendBatch, sendMail, welcomeEmail } from '../mail.js'
 import { findIndustry } from '../../shared/industries.js'
 import { seedIndustry } from './sheets.js'
 
@@ -411,6 +411,89 @@ router.get('/audit', route(async (_request, response) => {
      FROM admin_audit_log ORDER BY created_at DESC LIMIT 300`,
   )
   return response.json({ entries: result.rows })
+}))
+
+// ---------------------------------------------------------------- Announcements
+const announcementSchema = z.object({
+  category: z.enum(Object.keys(ANNOUNCEMENT_CATEGORIES)),
+  audience: z.enum(['everyone', 'admins', 'owners']),
+  title: z.string().trim().min(1, 'Add a title.').max(150),
+  body: z.string().trim().min(1, 'Write the message.').max(10000),
+  ctaLabel: z.string().trim().max(40).optional().default(''),
+  ctaUrl: z.union([z.literal(''), z.url({ protocol: /^https?$/ }).max(500)]).optional().default(''),
+})
+const AUDIENCE_ROLES = { everyone: ['owner', 'admin', 'manager', 'staff'], admins: ['owner', 'admin'], owners: ['owner'] }
+
+// One row per person (someone in two workspaces gets one email); product updates respect opt-outs.
+function recipients(db, values) {
+  return db.query(
+    `SELECT DISTINCT ON (u.id) u.id, u.full_name AS "fullName", u.email
+     FROM users u JOIN organization_members om ON om.user_id = u.id
+     WHERE om.role = ANY($1) AND ($2 OR u.product_updates)
+     ORDER BY u.id, om.created_at`,
+    [AUDIENCE_ROLES[values.audience], values.category !== 'product'],
+  )
+}
+
+function renderAnnouncement(request, values, fullName) {
+  return announcementEmail({
+    ...values,
+    ctaLabel: values.ctaUrl ? values.ctaLabel || 'Learn more' : '',
+    fullName,
+    appUrl: appUrl(request, '/'),
+    preferencesUrl: appUrl(request, '/#/settings?tab=account'),
+  })
+}
+
+router.get('/announcements', route(async (_request, response) => {
+  const result = await pool.query(
+    `SELECT a.id, a.category, a.audience, a.title, a.body, a.cta_label AS "ctaLabel", a.cta_url AS "ctaUrl",
+            a.recipient_count AS "recipientCount", a.emailed_count AS "emailedCount", a.failed_count AS "failedCount",
+            a.sent_at AS "sentAt", u.email AS "sentBy"
+     FROM announcements a LEFT JOIN users u ON u.id = a.created_by ORDER BY a.sent_at DESC LIMIT 100`,
+  )
+  return response.json({ announcements: result.rows, emailConfigured: emailConfigured() })
+}))
+
+router.post('/announcements/preview', route(async (request, response) => {
+  const values = announcementSchema.parse(request.body)
+  const people = await recipients(pool, values)
+  const email = renderAnnouncement(request, values, request.auth.fullName)
+  return response.json({ subject: email.subject, html: email.html, recipients: people.rowCount })
+}))
+
+router.post('/announcements/test', route(async (request, response) => {
+  const values = announcementSchema.parse(request.body)
+  const result = await sendMail({ to: request.auth.email, ...renderAnnouncement(request, values, request.auth.fullName) })
+  if (!result.sent) throw new HttpError(400, result.reason)
+  return response.json({ sentTo: request.auth.email })
+}))
+
+router.post('/announcements', route(async (request, response) => {
+  const values = announcementSchema.parse(request.body)
+  const people = (await recipients(pool, values)).rows
+  if (!people.length) throw new HttpError(400, 'Nobody matches this audience yet.')
+  const announcement = await withTransaction(async (client) => {
+    const created = await client.query(
+      `INSERT INTO announcements (category, audience, title, body, cta_label, cta_url, recipient_count, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      [values.category, values.audience, values.title, values.body, values.ctaUrl ? values.ctaLabel || 'Learn more' : null, values.ctaUrl || null, people.length, request.auth.userId],
+    )
+    const id = created.rows[0].id
+    // Everyone also sees it inside OVO, so the message lands even without email.
+    await client.query(
+      `INSERT INTO notifications (organization_id, user_id, title, message, resource_type, resource_id, link)
+       SELECT om.organization_id, om.user_id, $1, $2, 'announcement', $3, $4
+       FROM organization_members om JOIN users u ON u.id = om.user_id
+       WHERE om.role = ANY($5) AND ($6 OR u.product_updates)`,
+      [`${ANNOUNCEMENT_CATEGORIES[values.category].label}: ${values.title}`, values.body.slice(0, 280), id, `#/updates?id=${id}`, AUDIENCE_ROLES[values.audience], values.category !== 'product'],
+    )
+    await audit(client, request.auth, 'sent announcement', 'announcement', { id, name: values.title }, { category: values.category, audience: values.audience, recipients: people.length })
+    return id
+  })
+  const result = await sendBatch(people.map((person) => ({ to: person.email, ...renderAnnouncement(request, values, person.fullName) })))
+  await pool.query('UPDATE announcements SET emailed_count = $1, failed_count = $2 WHERE id = $3', [result.sent, result.failed, announcement])
+  return response.status(201).json({ id: announcement, recipients: people.length, emailed: result.sent, failed: result.failed, emailConfigured: emailConfigured() })
 }))
 
 export default router

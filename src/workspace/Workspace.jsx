@@ -12,6 +12,7 @@ import Sheets, { NewSheetModal } from './views/Sheets.jsx'
 import Sheet from './views/Sheet.jsx'
 import Forms from './views/Forms.jsx'
 import Automations from './views/Automations.jsx'
+import Updates, { UPDATE_CATEGORIES } from './views/Updates.jsx'
 import Overview from './views/Overview.jsx'
 import Projects from './views/Projects.jsx'
 import Tasks from './views/Tasks.jsx'
@@ -29,7 +30,7 @@ import './ovo.css'
 const views = {
   overview: Overview, projects: Projects, tasks: Tasks, clients: Clients, campaigns: Campaigns,
   calendar: Calendar, files: Files, vault: Files, chat: Chat, notifications: Notifications,
-  billing: Billing, settings: Settings, sheets: Sheets, sheet: Sheet, forms: Forms, automations: Automations,
+  billing: Billing, settings: Settings, sheets: Sheets, sheet: Sheet, forms: Forms, automations: Automations, updates: Updates,
 }
 
 // Which store collections each record type touches, so a save refreshes only what changed.
@@ -66,10 +67,29 @@ function Workspace({ account, setAccount, onSignedOut }) {
   const [navOpen, setNavOpen] = useState(false)
   const [searching, setSearching] = useState(false)
   const [newSheet, setNewSheet] = useState(null)
+  const [latestUpdate, setLatestUpdate] = useState(null)
   const industry = industryFor(account.organization.industry)
 
   const allowed = useMemo(() => allowedViews(role), [role])
   const view = allowed.some((item) => item.key === route.view) ? route.view : 'overview'
+
+  // The newest OVO announcement from the last two weeks shows as a banner until dismissed.
+  useEffect(() => {
+    let dismissed = []
+    try { dismissed = JSON.parse(localStorage.getItem('ovo.dismissedUpdates') || '[]') } catch { /* private mode */ }
+    api('/api/announcements').then((result) => {
+      const latest = result.announcements[0]
+      if (latest && Date.now() - new Date(latest.sentAt).getTime() < 14 * 86400000 && !dismissed.includes(latest.id)) setLatestUpdate(latest)
+    }).catch(() => {})
+  }, [])
+
+  function dismissUpdate() {
+    try {
+      const dismissed = JSON.parse(localStorage.getItem('ovo.dismissedUpdates') || '[]')
+      localStorage.setItem('ovo.dismissedUpdates', JSON.stringify([latestUpdate.id, ...dismissed].slice(0, 50)))
+    } catch { /* private mode */ }
+    setLatestUpdate(null)
+  }
 
   // Ctrl/⌘ + K opens universal search from anywhere.
   useEffect(() => {
@@ -302,6 +322,14 @@ function Workspace({ account, setAccount, onSignedOut }) {
               <Icon name="alert" size={16} />
               Your free trial has ended. Your workspace keeps working while billing is being set up.
               <a href="#/billing">View plan</a>
+            </div>
+          )}
+          {latestUpdate && view !== 'updates' && (
+            <div className={`ws-banner ws-banner-update tone-${UPDATE_CATEGORIES[latestUpdate.category]?.tone || 'violet'}`}>
+              <Icon name={UPDATE_CATEGORIES[latestUpdate.category]?.icon || 'sparkle'} size={16} />
+              <span><b>{UPDATE_CATEGORIES[latestUpdate.category]?.label || 'Update'}:</b> {latestUpdate.title}</span>
+              <a href={`#/updates?id=${latestUpdate.id}`} onClick={dismissUpdate}>Read more</a>
+              <button type="button" className="ws-banner-close" aria-label="Dismiss" onClick={dismissUpdate}><Icon name="close" size={14} /></button>
             </div>
           )}
           <main className={`ws-content${view === 'sheet' ? ' ws-content-wide' : ''}`} key={view === 'sheet' ? `sheet-${route.params.id}` : view}>
