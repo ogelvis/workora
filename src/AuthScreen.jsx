@@ -14,9 +14,9 @@ const copy = {
   forgot: { eyebrow: 'Account recovery', title: 'Forgot your password?' },
 }
 
-function AuthScreen({ mode, setMode, token, onAuthenticated, onBack }) {
-  const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
+function AuthScreen({ mode, setMode, token, onAuthenticated, onBack, initialNotice = '', initialError = '' }) {
+  const [error, setError] = useState(initialError)
+  const [notice, setNotice] = useState(initialNotice)
   const [busy, setBusy] = useState(false)
   const [tokenInfo, setTokenInfo] = useState(null)
   const [tokenError, setTokenError] = useState('')

@@ -20,6 +20,16 @@ function readLinkToken() {
   return null
 }
 
+// After confirming a new sign-in email, the server sends people to /?email-change=…
+const EMAIL_CHANGE_MESSAGES = {
+  done: { notice: 'Your email has been changed. Sign in with your new email.' },
+  expired: { error: 'That email confirmation link has expired or was already used. Sign in and try again from Settings → My account.' },
+  taken: { error: 'Another OVO account already uses that email, so it wasn’t changed.' },
+}
+function readEmailChange() {
+  return EMAIL_CHANGE_MESSAGES[new URLSearchParams(window.location.search).get('email-change')] || null
+}
+
 function Suspended({ account, onSignedOut }) {
   async function logout() {
     try {
@@ -91,12 +101,13 @@ function App() {
 
 function Main() {
   const [linkToken] = useState(readLinkToken)
+  const [emailChange] = useState(readEmailChange)
   const [entryPath] = useState(readEntryPath)
   const [account, setAccount] = useState(null)
   const [gateway, setGateway] = useState(false)
   const [checking, setChecking] = useState(!linkToken)
   const [welcoming, setWelcoming] = useState(linkToken?.mode === 'welcome')
-  const [screen, setScreen] = useState(linkToken ? 'auth' : 'landing')
+  const [screen, setScreen] = useState(linkToken || emailChange ? 'auth' : 'landing')
   const [authMode, setAuthMode] = useState(linkToken && linkToken.mode !== 'welcome' ? linkToken.mode : 'login')
 
   useEffect(() => {
@@ -104,6 +115,7 @@ function Main() {
       window.history.replaceState(null, '', window.location.pathname)
       return
     }
+    if (emailChange) window.history.replaceState(null, '', '/')
     let active = true
     const gatewayCheck = entryPath
       ? api(`/api/auth/gateway/${encodeURIComponent(entryPath)}`).then(() => true).catch(() => false)
@@ -120,7 +132,7 @@ function Main() {
     return () => {
       active = false
     }
-  }, [linkToken, entryPath])
+  }, [linkToken, entryPath, emailChange])
 
   const authenticated = useCallback(async () => {
     // Fetch /me so the workspace also receives subscription details.
@@ -170,6 +182,8 @@ function Main() {
           mode={authMode}
           setMode={setAuthMode}
           token={linkToken?.token}
+          initialNotice={emailChange?.notice}
+          initialError={emailChange?.error}
           onAuthenticated={authenticated}
           onBack={() => setScreen('landing')}
         />

@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import bcrypt from 'bcryptjs'
 import express from 'express'
 import rateLimit from 'express-rate-limit'
@@ -5,7 +6,7 @@ import { z } from 'zod'
 import { pool } from '../db.js'
 import { adminPath, createSession, destroySession, hashToken, isPlatformAdmin, platformAdminEmails, requireAuth } from '../auth.js'
 import { seedIndustry } from './sheets.js'
-import { emailConfigured, ownerResetEmail, sendMail } from '../mail.js'
+import { emailChangedEmail, emailConfigured, ownerResetEmail, sendMail, verifyEmailChangeEmail } from '../mail.js'
 import { findIndustry } from '../../shared/industries.js'
 import {
   HttpError, createToken, appUrl, emailSchema, getSubscription, logActivity, notify, passwordSchema, route,
@@ -390,6 +391,96 @@ router.post('/sessions/revoke-others', requireAuth, route(async (request, respon
     [request.auth.userId, request.auth.sessionId],
   )
   return response.json({ revoked: result.rowCount })
+}))
+
+// ---------------------------------------------------------------- My account
+router.put('/profile', requireAuth, route(async (request, response) => {
+  const { fullName } = z.object({ fullName: z.string().trim().min(2, 'Enter your full name.').max(120) }).parse(request.body)
+  await pool.query('UPDATE users SET full_name = $1 WHERE id = $2', [fullName, request.auth.userId])
+  if (request.auth.organizationId) await logActivity(pool, request.auth, 'updated their profile', 'user', fullName)
+  return response.json({ user: { id: request.auth.userId, fullName, email: request.auth.email } })
+}))
+
+// Email-change links are signed rather than stored: they carry the user, the new address and
+// the address they replace, so a link stops working as soon as the email changes again.
+const EMAIL_CHANGE_MS = 24 * 60 * 60 * 1000
+function signEmailChange(payload) {
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url')
+  const signature = createHmac('sha256', process.env.SESSION_SECRET).update(`email-change.${body}`).digest('base64url')
+  return `${body}.${signature}`
+}
+function readEmailChange(token) {
+  const [body, signature] = String(token || '').split('.')
+  if (!body || !signature) return null
+  const expected = createHmac('sha256', process.env.SESSION_SECRET).update(`email-change.${body}`).digest()
+  const given = Buffer.from(signature, 'base64url')
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'))
+    return payload.exp > Date.now() ? payload : null
+  } catch {
+    return null
+  }
+}
+
+async function applyEmailChange(client, userId, from, to) {
+  const taken = await client.query('SELECT 1 FROM users WHERE lower(email) = $1 AND id != $2', [to, userId])
+  if (taken.rowCount) throw new HttpError(409, 'Another OVO account already uses that email.')
+  const result = await client.query(
+    'UPDATE users SET email = $1, email_verified_at = now() WHERE id = $2 AND lower(email) = $3 RETURNING full_name',
+    [to, userId, from],
+  )
+  return result.rows[0]
+}
+
+router.post('/change-email', requireAuth, authLimiter, route(async (request, response) => {
+  const values = z.object({ newEmail: emailSchema, currentPassword: z.string().max(128) }).parse(request.body)
+  const newEmail = values.newEmail.toLowerCase()
+  const oldEmail = request.auth.email.toLowerCase()
+  if (newEmail === oldEmail) throw new HttpError(400, 'That’s already your email.')
+  if (isPlatformAdmin(oldEmail) || isPlatformAdmin(newEmail)) {
+    throw new HttpError(400, 'The OVO owner email is set in the deployment settings (PLATFORM_ADMIN_EMAILS) and can’t be changed here.')
+  }
+  const user = await pool.query('SELECT password_hash, password_set FROM users WHERE id = $1', [request.auth.userId])
+  if (!user.rows[0].password_set) throw new HttpError(400, 'Choose a password first (below), then change your email.')
+  if (!(await bcrypt.compare(values.currentPassword, user.rows[0].password_hash))) throw new HttpError(400, 'Your current password is incorrect.')
+  const taken = await pool.query('SELECT 1 FROM users WHERE lower(email) = $1', [newEmail])
+  if (taken.rowCount) throw new HttpError(409, 'Another OVO account already uses that email.')
+
+  // With email set up, the new address must confirm it's real before it becomes the sign-in.
+  if (emailConfigured()) {
+    const token = signEmailChange({ u: request.auth.userId, from: oldEmail, to: newEmail, exp: Date.now() + EMAIL_CHANGE_MS })
+    const link = appUrl(request, `/api/auth/confirm-email?token=${encodeURIComponent(token)}`)
+    const sent = await sendMail({ to: newEmail, ...verifyEmailChangeEmail({ fullName: request.auth.fullName, newEmail, link }) })
+    if (sent.sent) return response.json({ pending: true, email: newEmail })
+    console.warn('Email change confirmation not sent:', sent.reason)
+  }
+  // No email service: the password check is the proof, and the change applies straight away.
+  await withTransaction(async (client) => {
+    await applyEmailChange(client, request.auth.userId, oldEmail, newEmail)
+    await client.query('DELETE FROM user_sessions WHERE user_id = $1 AND id != $2', [request.auth.userId, request.auth.sessionId])
+    if (request.auth.organizationId) await logActivity(client, request.auth, 'changed their sign-in email', 'user', request.auth.fullName)
+  })
+  await sendMail({ to: oldEmail, ...emailChangedEmail({ fullName: request.auth.fullName, newEmail }) })
+  return response.json({ changed: true, user: { id: request.auth.userId, fullName: request.auth.fullName, email: newEmail } })
+}))
+
+router.get('/confirm-email', authLimiter, route(async (request, response) => {
+  const payload = readEmailChange(request.query.token)
+  if (!payload) return response.redirect(303, '/?email-change=expired')
+  try {
+    const user = await withTransaction(async (client) => {
+      const updated = await applyEmailChange(client, payload.u, payload.from, payload.to)
+      if (updated) await client.query('DELETE FROM user_sessions WHERE user_id = $1', [payload.u])
+      return updated
+    })
+    if (!user) return response.redirect(303, '/?email-change=expired')
+    await sendMail({ to: payload.from, ...emailChangedEmail({ fullName: user.full_name, newEmail: payload.to }) })
+    return response.redirect(303, '/?email-change=done')
+  } catch (error) {
+    if (error instanceof HttpError) return response.redirect(303, '/?email-change=taken')
+    throw error
+  }
 }))
 
 async function findInvitation(db, token) {

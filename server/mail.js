@@ -113,3 +113,54 @@ The link works once and expires in 1 hour. If you didn't ask for this, ignore th
   </td></tr></table></body></html>`
   return { subject: 'Reset your OVO owner password', text, html }
 }
+
+function simpleEmail({ heading, body, button, link, footer }) {
+  return `<!doctype html><html><body style="margin:0;background:#f7f6fb;font-family:Segoe UI,Arial,sans-serif;color:#1c1a33">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:32px 12px"><tr><td align="center">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border-radius:18px;overflow:hidden;border:1px solid #e6e3f0">
+      <tr><td style="background:linear-gradient(135deg,#6a3df5,#4318c9);padding:24px 32px;color:#ffffff"><div style="font-size:26px;font-weight:800;letter-spacing:-1px">OVO</div></td></tr>
+      <tr><td style="padding:30px 32px">
+        <h1 style="font-size:20px;margin:0 0 12px">${heading}</h1>
+        <p style="font-size:15px;line-height:1.6;margin:0 0 22px">${body}</p>
+        ${button ? `<a href="${escape(link)}" style="display:inline-block;background:#5b2ef0;color:#ffffff;text-decoration:none;font-weight:700;padding:14px 26px;border-radius:11px;font-size:15px">${button}</a>` : ''}
+        <p style="font-size:13px;line-height:1.6;color:#6b6883;margin:22px 0 0">${footer}</p>
+      </td></tr>
+    </table>
+  </td></tr></table></body></html>`
+}
+
+export function verifyEmailChangeEmail({ fullName, newEmail, link }) {
+  const first = (fullName || 'there').split(' ')[0]
+  const text = `Hello ${first},
+
+Confirm ${newEmail} as your new OVO sign-in email: ${link}
+
+The link expires in 24 hours. Until you confirm, you keep signing in with your current email. If you didn't ask for this, ignore this email.
+
+— OVO`
+  const html = simpleEmail({
+    heading: 'Confirm your new email',
+    body: `Hello ${escape(first)}, click below to make <strong>${escape(newEmail)}</strong> your OVO sign-in email.`,
+    button: 'Confirm my new email',
+    link,
+    footer: 'The link expires in 24 hours. Until you confirm, you keep signing in with your current email. If you didn’t ask for this, ignore this email.',
+  })
+  return { subject: 'Confirm your new OVO email', text, html }
+}
+
+export function emailChangedEmail({ fullName, newEmail }) {
+  const first = (fullName || 'there').split(' ')[0]
+  const text = `Hello ${first},
+
+Your OVO sign-in email was changed to ${newEmail}. From now on, sign in with that address.
+
+If you didn't make this change, contact your workspace owner or OVO support straight away.
+
+— OVO`
+  const html = simpleEmail({
+    heading: 'Your sign-in email changed',
+    body: `Hello ${escape(first)}, your OVO sign-in email is now <strong>${escape(newEmail)}</strong>. Use it the next time you sign in.`,
+    footer: 'If you didn’t make this change, contact your workspace owner or OVO support straight away.',
+  })
+  return { subject: 'Your OVO sign-in email was changed', text, html }
+}
