@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import ActivityChart from '../components/ActivityChart.jsx'
 import Icon from '../components/Icon.jsx'
-import { Avatar, Button, Empty, Field, Meter, Modal, PageHeader, Pill, Segmented, copyText } from '../components/ui.jsx'
+import { Avatar, Button, Empty, Field, Meter, Modal, Pill, copyText } from '../components/ui.jsx'
 import { api } from '../lib/api.js'
 import { capitalize, formatBytes, formatDateTime, formatPrice, timeAgo, toLocalInput } from '../lib/format.js'
 import { useWorkspace } from '../workspace/context.js'
@@ -312,110 +312,254 @@ function WorkspaceDetail({ id, plans, onClose, onChanged }) {
   )
 }
 
-// ---------------------------------------------------------------- Tabs
+// ---------------------------------------------------------------- Shared pieces
 
-function OverviewTab() {
-  const { toast } = useWorkspace()
-  const [data, setData] = useState(null)
-  useEffect(() => {
-    api('/api/admin/overview').then(setData).catch((error) => toast(error.message, 'error'))
-  }, [toast])
-  if (!data) return <div className="card chart-skeleton" />
-  const { totals } = data
+// Loads data for a section and keeps loading, error and retry in one place.
+function useLoad(load, deps) {
+  const { expired } = useWorkspace()
+  const [state, setState] = useState({ data: null, error: null, loading: true })
+  const run = useCallback(async () => {
+    setState((current) => ({ ...current, loading: true, error: null }))
+    try {
+      const data = await load()
+      setState({ data, error: null, loading: false })
+    } catch (error) {
+      if (error.status === 401) expired()
+      setState((current) => ({ ...current, error, loading: false }))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps)
+  useEffect(() => { run() }, [run])
+  return { ...state, reload: run }
+}
+
+function ErrorState({ error, onRetry }) {
   return (
-    <div className="stack">
-      <section className="stat-grid">
-        <div className="stat-tile"><span className="stat-label">Workspaces</span><strong className="stat-value">{totals.workspaces}</strong><span className="stat-note">{totals.newLast30Days} new in 30 days</span></div>
-        <div className="stat-tile"><span className="stat-label">Paying</span><strong className="stat-value">{totals.paying}</strong><span className="stat-note">{totals.activeTrials} on trial · {totals.endedTrials} trial ended</span></div>
-        <div className="stat-tile"><span className="stat-label">Monthly recurring revenue</span><strong className="stat-value">{formatPrice(totals.mrr, totals.currency || 'NGN')}</strong><span className="stat-note">From active plans</span></div>
-        <div className="stat-tile"><span className="stat-label">Users</span><strong className="stat-value">{totals.users}</strong><span className="stat-note">{formatBytes(totals.storageBytes)} stored</span></div>
-      </section>
-      <section className="grid-2-1">
-        <div className="card">
-          <div className="card-head"><div><h2>New workspaces</h2><p>Sign-ups per week over the last 12 weeks.</p></div></div>
-          <ActivityChart weeks={data.weeklySignups} unit="sign-ups" />
-        </div>
-        <div className="card">
-          <div className="card-head"><div><h2>Plans</h2><p>Workspaces on each plan.</p></div></div>
-          <ul className="admin-list">
-            {data.byPlan.map((row) => (
-              <li key={row.plan}><div><strong>{row.plan}</strong></div><span className="count-chip">{row.count}</span></li>
-            ))}
-          </ul>
-          {totals.suspended > 0 && <p className="muted-note">{totals.suspended} suspended</p>}
-        </div>
-      </section>
-      <section className="card">
-        <div className="card-head"><div><h2>Recent admin actions</h2></div></div>
-        {data.recentAudit.length ? (
-          <ul className="admin-list compact">
-            {data.recentAudit.map((entry) => (
-              <li key={entry.id}><div><span><strong>{entry.adminEmail}</strong> {entry.action} <strong>{entry.targetName}</strong></span><small>{timeAgo(entry.createdAt)}</small></div></li>
-            ))}
-          </ul>
-        ) : <p className="muted-note">Actions you take in this console are recorded here.</p>}
-      </section>
+    <div className="cx-error">
+      <span className="empty-icon"><Icon name="alert" size={20} /></span>
+      <div><strong>This section didn’t load</strong><p>{error?.message || 'Something went wrong.'}</p></div>
+      <Button icon="clock" onClick={onRetry}>Try again</Button>
     </div>
   )
 }
 
-function WorkspacesTab({ plans }) {
-  const { toast } = useWorkspace()
-  const [adding, setAdding] = useState(false)
-  const [query, setQuery] = useState('')
-  const [status, setStatus] = useState('')
-  const [organizations, setOrganizations] = useState(null)
+function Skeleton({ rows = 3 }) {
+  return <div className="cx-skeleton">{Array.from({ length: rows }, (_, index) => <span key={index} />)}</div>
+}
+
+export function SectionHeader({ eyebrow, title, description, children }) {
+  return (
+    <header className="cx-head">
+      <div>
+        {eyebrow && <span className="eyebrow">{eyebrow}</span>}
+        <h1>{title}</h1>
+        {description && <p>{description}</p>}
+      </div>
+      {children && <div className="cx-head-actions">{children}</div>}
+    </header>
+  )
+}
+
+const attentionInfo = {
+  payment: { label: 'Payment overdue', tone: 'rose', icon: 'alert' },
+  trial_ended: { label: 'Trial ended', tone: 'amber', icon: 'clock' },
+  trial_ending: { label: 'Trial ends soon', tone: 'amber', icon: 'clock' },
+  paid_lapsed: { label: 'Paid period ended', tone: 'rose', icon: 'billing' },
+  paid_ending: { label: 'Renewal due soon', tone: 'blue', icon: 'billing' },
+  partner_pending: { label: 'Partner hasn’t signed in', tone: 'violet', icon: 'send' },
+}
+
+function attentionDate(row) {
+  const date = ['paid_lapsed', 'paid_ending'].includes(row.reason) ? row.currentPeriodEnd : ['trial_ended', 'trial_ending'].includes(row.reason) ? row.trialEndsAt : null
+  return date ? new Date(date).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : ''
+}
+
+// ---------------------------------------------------------------- Overview
+
+export function OverviewSection({ go, onAddPartner }) {
+  const { account } = useWorkspace()
+  const { data, error, reload } = useLoad(() => api('/api/admin/overview'), [])
   const [openId, setOpenId] = useState(null)
+  const [plans, setPlans] = useState([])
+  useEffect(() => { api('/api/admin/plans').then((result) => setPlans(result.plans)).catch(() => {}) }, [])
 
-  const load = useCallback(async () => {
-    const params = new URLSearchParams()
-    if (query.trim()) params.set('q', query.trim())
-    if (status) params.set('status', status)
-    const result = await api(`/api/admin/organizations?${params}`)
-    setOrganizations(result.organizations)
-  }, [query, status])
-
-  useEffect(() => {
-    const timer = setTimeout(() => load().catch((error) => toast(error.message, 'error')), 250)
-    return () => clearTimeout(timer)
-  }, [load, toast])
+  const hour = new Date().getHours()
+  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
 
   return (
     <div className="stack">
-      <div className="toolbar-row">
+      <section className="cx-hero">
+        <div>
+          <span className="cx-hero-date">{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</span>
+          <h1>{greeting}, {account.user.fullName.split(' ')[0]}</h1>
+          <p>Here’s how OVO is doing today.</p>
+        </div>
+        <div className="cx-hero-actions">
+          <button type="button" onClick={onAddPartner}><Icon name="plus" size={16} />Add partner business</button>
+          <button type="button" onClick={() => go('workspaces')}><Icon name="building" size={16} />All workspaces</button>
+          <button type="button" onClick={() => go('plans')}><Icon name="billing" size={16} />Pricing</button>
+        </div>
+      </section>
+
+      {error ? <ErrorState error={error} onRetry={reload} /> : !data ? <Skeleton rows={4} /> : (() => {
+        const { totals } = data
+        const maxPlan = Math.max(1, ...data.byPlan.map((row) => row.count))
+        return (
+          <>
+            <section className="cx-kpis">
+              <button type="button" className="cx-kpi tone-violet" onClick={() => go('workspaces')}>
+                <span className="cx-kpi-icon"><Icon name="building" size={18} /></span>
+                <strong>{totals.workspaces}</strong><span>Workspaces</span><small>{totals.newLast30Days} new in 30 days</small>
+              </button>
+              <button type="button" className="cx-kpi tone-green" onClick={() => go('workspaces', { status: 'active' })}>
+                <span className="cx-kpi-icon"><Icon name="check" size={18} /></span>
+                <strong>{totals.paying}</strong><span>Active & paying</span><small>{totals.activeTrials} on trial · {totals.endedTrials} trial ended</small>
+              </button>
+              <div className="cx-kpi tone-amber">
+                <span className="cx-kpi-icon"><Icon name="money" size={18} /></span>
+                <strong>{formatPrice(totals.mrr, totals.currency || 'NGN')}</strong><span>Monthly recurring revenue</span><small>From active plans</small>
+              </div>
+              <button type="button" className="cx-kpi tone-pink" onClick={() => go('partners')}>
+                <span className="cx-kpi-icon"><Icon name="deal" size={18} /></span>
+                <strong>{totals.partners}</strong><span>Partner businesses</span><small>Added by you</small>
+              </button>
+              <button type="button" className="cx-kpi tone-blue" onClick={() => go('users')}>
+                <span className="cx-kpi-icon"><Icon name="team" size={18} /></span>
+                <strong>{totals.users}</strong><span>People</span><small>{(totals.records || 0).toLocaleString()} records · {formatBytes(totals.storageBytes)}</small>
+              </button>
+              {totals.suspended > 0 && (
+                <button type="button" className="cx-kpi tone-rose" onClick={() => go('workspaces', { status: 'suspended' })}>
+                  <span className="cx-kpi-icon"><Icon name="shield" size={18} /></span>
+                  <strong>{totals.suspended}</strong><span>Suspended</span><small>Locked out until reactivated</small>
+                </button>
+              )}
+            </section>
+
+            <section className="cx-grid">
+              <div className="card cx-span-2">
+                <div className="card-head"><div><h2>New workspaces</h2><p>Sign-ups per week, last 12 weeks.</p></div></div>
+                <ActivityChart weeks={data.weeklySignups} unit="sign-ups" />
+              </div>
+              <div className="card">
+                <div className="card-head"><div><h2>Plans</h2><p>Workspaces and revenue by plan.</p></div></div>
+                <ul className="cx-bars">
+                  {data.byPlan.map((row) => (
+                    <li key={row.plan}>
+                      <div><strong>{row.plan}</strong><span>{row.count} {row.count === 1 ? "workspace" : "workspaces"} · {row.active} active</span></div>
+                      <div className="cx-bar"><i style={{ width: `${(row.count / maxPlan) * 100}%` }} /></div>
+                      <small>{formatPrice(row.revenue, totals.currency || 'NGN')} / month</small>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </section>
+
+            <section className="cx-grid">
+              <div className="card cx-span-2">
+                <div className="card-head"><div><h2>Needs your attention</h2><p>Trials ending, renewals due, unpaid accounts and partners who haven’t signed in.</p></div></div>
+                {data.attention.length ? (
+                  <ul className="cx-attention">
+                    {data.attention.map((row) => {
+                      const info = attentionInfo[row.reason]
+                      return (
+                        <li key={`${row.id}-${row.reason}`}>
+                          <button type="button" onClick={() => setOpenId(row.id)}>
+                            <span className={`create-icon tone-${info.tone}`}><Icon name={info.icon} size={15} /></span>
+                            <span><strong>{row.name}{row.partner && <span className="partner-tag">Partner</span>}</strong><small>{info.label}{attentionDate(row) ? ` · ${attentionDate(row)}` : ''}</small></span>
+                            <Icon name="right" size={14} />
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                ) : <div className="cx-allclear"><Icon name="check" size={18} />All clear. Nothing needs action right now.</div>}
+              </div>
+              <div className="card">
+                <div className="card-head"><div><h2>Recent actions</h2></div><button type="button" className="text-link" onClick={() => go('audit')}>Audit log <Icon name="right" size={14} /></button></div>
+                {data.recentAudit.length ? (
+                  <ul className="admin-list compact">
+                    {data.recentAudit.map((entry) => (
+                      <li key={entry.id}><div><span>{capitalize(entry.action)} <strong>{entry.targetName}</strong></span><small>{timeAgo(entry.createdAt)}</small></div></li>
+                    ))}
+                  </ul>
+                ) : <p className="muted-note">Everything you do here is recorded.</p>}
+              </div>
+            </section>
+          </>
+        )
+      })()}
+      {openId && <WorkspaceDetail id={openId} plans={plans} onClose={() => setOpenId(null)} onChanged={reload} />}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------- Workspaces & partners
+
+export function WorkspacesSection({ partnersOnly = false, onAddPartner, refreshKey }) {
+  const { params } = useWorkspace()
+  const [query, setQuery] = useState('')
+  const [debounced, setDebounced] = useState('')
+  const [status, setStatus] = useState(params.status || '')
+  const [openId, setOpenId] = useState(null)
+  const [plans, setPlans] = useState([])
+
+  useEffect(() => { api('/api/admin/plans').then((result) => setPlans(result.plans)).catch(() => {}) }, [])
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(query.trim()), 250)
+    return () => clearTimeout(timer)
+  }, [query])
+
+  const { data, error, reload } = useLoad(() => {
+    const search = new URLSearchParams()
+    if (debounced) search.set('q', debounced)
+    if (status) search.set('status', status)
+    if (partnersOnly) search.set('partner', '1')
+    return api(`/api/admin/organizations?${search}`).then((result) => result.organizations)
+  }, [debounced, status, partnersOnly, refreshKey])
+
+  return (
+    <div className="stack">
+      <SectionHeader
+        eyebrow={partnersOnly ? 'Growth' : 'Customers'}
+        title={partnersOnly ? 'Partner businesses' : 'Workspaces'}
+        description={partnersOnly ? 'Businesses you set up yourself. Send them a sign-in link any time.' : 'Every business on OVO, with plan, payment and usage.'}
+      >
+        <Button variant="primary" icon="plus" onClick={onAddPartner}>Add partner business</Button>
+      </SectionHeader>
+      <div className="cx-toolbar">
         <label className="ws-search admin-search">
           <Icon name="search" size={16} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by workspace, email or owner…" aria-label="Search workspaces" />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by business, email or owner…" aria-label="Search workspaces" />
         </label>
         <select className="filter-select" value={status} onChange={(event) => setStatus(event.target.value)} aria-label="Filter by status">
           <option value="">All statuses</option>
           {Object.entries(statusLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
-        <Button variant="primary" icon="plus" onClick={() => setAdding(true)}>Add partner business</Button>
+        {data && <span className="cx-count">{data.length} {data.length === 1 ? 'workspace' : 'workspaces'}</span>}
       </div>
-      {organizations && !organizations.length ? <Empty icon="building" title="No workspaces found">Try a different search.</Empty> : (
+      {error ? <ErrorState error={error} onRetry={reload} /> : !data ? <Skeleton rows={5} /> : !data.length ? (
+        <Empty icon={partnersOnly ? 'deal' : 'building'} title={partnersOnly ? 'No partner businesses yet' : 'No workspaces found'}
+          action={partnersOnly && <Button variant="primary" icon="plus" onClick={onAddPartner}>Add partner business</Button>}>
+          {partnersOnly ? 'Add a business and OVO emails its owner a link that opens their dashboard directly.' : 'Try a different search or status.'}
+        </Empty>
+      ) : (
         <div className="card table-card">
-          <table className="table">
-            <thead><tr><th>Workspace</th><th>Owner</th><th>Plan</th><th>Status</th><th>Members</th><th>Storage</th><th>Created</th></tr></thead>
+          <table className="table cx-table">
+            <thead><tr><th>Business</th><th>Owner</th><th>Plan</th><th>Status</th><th>Members</th><th>Storage</th><th>Created</th></tr></thead>
             <tbody>
-              {(organizations || []).map((org) => (
-                <tr key={org.id}>
+              {data.map((org) => (
+                <tr key={org.id} onClick={() => setOpenId(org.id)} className="cx-row">
                   <td>
-                    <button type="button" className="client-cell" onClick={() => setOpenId(org.id)}>
+                    <div className="client-cell">
                       <Avatar name={org.name} size="sm" />
-                      <div className="two-line"><strong>{org.name}{org.partner && <span className="partner-tag">Partner</span>}</strong><span>{org.businessEmail}</span></div>
-                    </button>
-                  </td>
-                  <td><div className="two-line"><span className="cell-strong">{org.ownerName || '—'}</span><span>{org.ownerEmail}</span></div></td>
-                  <td>{org.plan}</td>
-                  <td><StatusPill organization={org} />{org.currentPeriodEnd && org.status === 'active' && <div className="cell-sub">until {new Date(org.currentPeriodEnd).toLocaleDateString()}</div>}</td>
-                  <td>{org.members}</td>
-                  <td>
-                    <div className="cell-meter">
-                      <span>{formatBytes(org.storageBytes)}</span>
-                      <Meter value={org.storageBytes} max={org.storageLimitBytes || 1} />
+                      <div className="two-line"><strong>{org.name}{org.partner && <span className="partner-tag">Partner</span>}</strong><span>{org.industry || org.businessEmail}</span></div>
                     </div>
                   </td>
+                  <td><div className="two-line"><span className="cell-strong">{org.ownerName || '—'}</span><span>{org.ownerEmail}</span></div></td>
+                  <td>{org.plan || '—'}</td>
+                  <td><StatusPill organization={org} />{org.currentPeriodEnd && org.status === 'active' && <div className="cell-sub">until {new Date(org.currentPeriodEnd).toLocaleDateString()}</div>}</td>
+                  <td>{org.members}</td>
+                  <td><div className="cell-meter"><span>{formatBytes(org.storageBytes)}</span><Meter value={org.storageBytes} max={org.storageLimitBytes || 1} /></div></td>
                   <td className="muted">{timeAgo(org.createdAt)}</td>
                 </tr>
               ))}
@@ -423,59 +567,67 @@ function WorkspacesTab({ plans }) {
           </table>
         </div>
       )}
-      {adding && <AddPartner plans={plans} onClose={() => setAdding(false)} onCreated={() => load().catch(() => {})} />}
-      {openId && <WorkspaceDetail id={openId} plans={plans} onClose={() => setOpenId(null)} onChanged={() => load().catch(() => {})} />}
+      {openId && <WorkspaceDetail id={openId} plans={plans} onClose={() => setOpenId(null)} onChanged={reload} />}
     </div>
   )
 }
 
-function UsersTab() {
+export { AddPartner }
+
+// ---------------------------------------------------------------- Users
+
+export function UsersSection() {
   const { toast } = useWorkspace()
   const [query, setQuery] = useState('')
-  const [users, setUsers] = useState(null)
+  const [debounced, setDebounced] = useState('')
   const [link, setLink] = useState(null)
-
   useEffect(() => {
-    const timer = setTimeout(() => {
-      const params = query.trim() ? `?${new URLSearchParams({ q: query.trim() })}` : ''
-      api(`/api/admin/users${params}`).then((result) => setUsers(result.users)).catch((error) => toast(error.message, 'error'))
-    }, 250)
+    const timer = setTimeout(() => setDebounced(query.trim()), 250)
     return () => clearTimeout(timer)
-  }, [query, toast])
+  }, [query])
+  const { data, error, reload } = useLoad(
+    () => api(`/api/admin/users${debounced ? `?${new URLSearchParams({ q: debounced })}` : ''}`).then((result) => result.users),
+    [debounced],
+  )
 
   async function resetLink(user) {
     try {
       const result = await api(`/api/admin/users/${user.id}/reset-link`, { method: 'POST' })
       setLink({ user, link: result.link })
-    } catch (error) {
-      toast(error.message, 'error')
+    } catch (requestError) {
+      toast(requestError.message, 'error')
     }
   }
 
   return (
     <div className="stack">
-      <label className="ws-search admin-search">
-        <Icon name="search" size={16} />
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name, email or workspace…" aria-label="Search users" />
-      </label>
-      <div className="card table-card">
-        <table className="table">
-          <thead><tr><th>User</th><th>Workspace</th><th>Role</th><th>Last sign-in</th><th>Joined</th><th aria-label="Actions" /></tr></thead>
-          <tbody>
-            {(users || []).map((user) => (
-              <tr key={`${user.id}-${user.organizationId}`}>
-                <td><div className="client-cell"><Avatar name={user.fullName} size="sm" /><div className="two-line"><strong>{user.fullName}</strong><span>{user.email}</span></div></div></td>
-                <td>{user.organizationName || <span className="muted">No workspace</span>}</td>
-                <td>{user.role ? capitalize(user.role) : '—'}</td>
-                <td className="muted">{user.lastSignInAt ? timeAgo(user.lastSignInAt) : 'Never'}</td>
-                <td className="muted">{timeAgo(user.createdAt)}</td>
-                <td className="cell-actions"><Button size="sm" icon="key" onClick={() => resetLink(user)}>Reset link</Button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {users && !users.length && <p className="muted-note pad">No users found.</p>}
+      <SectionHeader eyebrow="Customers" title="People" description="Everyone with an OVO account. Create a password-reset link for anyone who’s locked out." />
+      <div className="cx-toolbar">
+        <label className="ws-search admin-search">
+          <Icon name="search" size={16} />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by name, email or workspace…" aria-label="Search people" />
+        </label>
+        {data && <span className="cx-count">{data.length} {data.length === 1 ? 'person' : 'people'}</span>}
       </div>
+      {error ? <ErrorState error={error} onRetry={reload} /> : !data ? <Skeleton rows={5} /> : !data.length ? <Empty icon="team" title="No one found">Try a different search.</Empty> : (
+        <div className="card table-card">
+          <table className="table cx-table">
+            <thead><tr><th>Person</th><th>Workspace</th><th>Role</th><th>Last sign-in</th><th>Joined</th><th aria-label="Actions" /></tr></thead>
+            <tbody>
+              {data.map((user) => (
+                <tr key={`${user.id}-${user.organizationId}`}>
+                  <td><div className="client-cell"><Avatar name={user.fullName} size="sm" /><div className="two-line"><strong>{user.fullName}</strong><span>{user.email}</span></div></div></td>
+                  <td>{user.organizationName || <span className="muted">No workspace</span>}</td>
+                  <td>{user.role ? <Pill>{capitalize(user.role)}</Pill> : '—'}</td>
+                  <td className="muted">{user.lastSignInAt ? timeAgo(user.lastSignInAt) : 'Never'}</td>
+                  <td className="muted">{timeAgo(user.createdAt)}</td>
+                  <td className="cell-actions"><Button size="sm" icon="key" onClick={() => resetLink(user)}>Reset link</Button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       {link && (
         <Modal title={`Password reset for ${link.user.fullName}`} onClose={() => setLink(null)} width={520}>
           <div className="modal-body">
@@ -491,6 +643,8 @@ function UsersTab() {
     </div>
   )
 }
+
+// ---------------------------------------------------------------- Plans
 
 function PlanCard({ plan, onSaved }) {
   const { toast } = useWorkspace()
@@ -548,78 +702,167 @@ function PlanCard({ plan, onSaved }) {
   )
 }
 
-function PlansTab({ plans, reloadPlans }) {
+export function PlansSection() {
+  const { data, error, reload } = useLoad(() => api('/api/admin/plans').then((result) => result.plans), [])
   return (
     <div className="stack">
-      <div className="notice">
-        <Icon name="alert" size={16} />
-        <span>Prices show on the landing page and in every workspace’s Billing page. Limits apply to all workspaces on the plan immediately.</span>
-      </div>
-      <div className="plans-admin">
-        {plans.map((plan) => <PlanCard key={plan.name} plan={plan} onSaved={reloadPlans} />)}
-      </div>
+      <SectionHeader eyebrow="Revenue" title="Plans & pricing" description="Prices appear on the landing page and every workspace’s Billing page. Limits apply to all workspaces on a plan immediately." />
+      {error ? <ErrorState error={error} onRetry={reload} /> : !data ? <Skeleton rows={4} /> : (
+        <div className="plans-admin">{data.map((plan) => <PlanCard key={plan.name} plan={plan} onSaved={reload} />)}</div>
+      )}
     </div>
   )
 }
 
-function AuditTab() {
-  const { toast } = useWorkspace()
-  const [entries, setEntries] = useState(null)
-  useEffect(() => {
-    api('/api/admin/audit').then((result) => setEntries(result.entries)).catch((error) => toast(error.message, 'error'))
-  }, [toast])
-  if (entries && !entries.length) return <Empty icon="shield" title="No admin actions yet">Every change made in this console is recorded here.</Empty>
+// ---------------------------------------------------------------- Audit
+
+export function AuditSection() {
+  const { data, error, reload } = useLoad(() => api('/api/admin/audit').then((result) => result.entries), [])
   return (
-    <div className="card table-card">
-      <table className="table">
-        <thead><tr><th>When</th><th>Admin</th><th>Action</th><th>Target</th></tr></thead>
-        <tbody>
-          {(entries || []).map((entry) => (
-            <tr key={entry.id}>
-              <td className="muted">{formatDateTime(entry.createdAt)}</td>
-              <td>{entry.adminEmail}</td>
-              <td className="cell-strong">{capitalize(entry.action)}</td>
-              <td>{entry.targetName} <span className="muted">· {entry.targetType}</span></td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="stack">
+      <SectionHeader eyebrow="Security" title="Audit log" description="Every change made in this console, newest first." />
+      {error ? <ErrorState error={error} onRetry={reload} /> : !data ? <Skeleton rows={6} /> : !data.length ? (
+        <Empty icon="shield" title="No actions yet">Every change made in this console is recorded here.</Empty>
+      ) : (
+        <div className="card table-card">
+          <table className="table cx-table">
+            <thead><tr><th>When</th><th>Action</th><th>Target</th><th>By</th></tr></thead>
+            <tbody>
+              {data.map((entry) => (
+                <tr key={entry.id}>
+                  <td className="muted">{formatDateTime(entry.createdAt)}</td>
+                  <td className="cell-strong">{capitalize(entry.action)}</td>
+                  <td>{entry.targetName || '—'} <span className="muted">· {entry.targetType}</span></td>
+                  <td className="muted">{entry.adminEmail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
 
-function Admin() {
-  const { params, navigate, toast } = useWorkspace()
-  const [plans, setPlans] = useState([])
-  const tab = ['overview', 'workspaces', 'users', 'plans', 'audit'].includes(params.tab) ? params.tab : 'overview'
+// ---------------------------------------------------------------- Account & security
 
-  const reloadPlans = useCallback(() => {
-    api('/api/admin/plans').then((result) => setPlans(result.plans)).catch((error) => toast(error.message, 'error'))
-  }, [toast])
+export function AccountSection() {
+  const { account, toast } = useWorkspace()
+  const [busy, setBusy] = useState(false)
+  const sessions = useLoad(() => api('/api/auth/sessions').then((result) => result.sessions), [])
 
-  useEffect(() => {
-    reloadPlans()
-  }, [reloadPlans])
+  async function submit(event) {
+    event.preventDefault()
+    const form = event.currentTarget
+    const values = Object.fromEntries(new FormData(form).entries())
+    if (values.newPassword !== values.confirmPassword) { toast('The new passwords don’t match.', 'error'); return }
+    setBusy(true)
+    try {
+      await api('/api/auth/change-password', { method: 'POST', body: { currentPassword: values.currentPassword, newPassword: values.newPassword } })
+      form.reset()
+      sessions.reload()
+      toast('Password changed. Other devices were signed out.')
+    } catch (error) {
+      toast(error.message, 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function signOutOthers() {
+    try {
+      await api('/api/auth/sessions/revoke-others', { method: 'POST' })
+      sessions.reload()
+      toast('Signed out everywhere else')
+    } catch (error) {
+      toast(error.message, 'error')
+    }
+  }
 
   return (
     <div className="stack">
-      <PageHeader eyebrow="Platform / Super admin" title="OVO console" description="Every workspace on OVO: plans, payments, users and access.">
-        <span className="vault-badge"><Icon name="shield" size={15} /> Platform admin</span>
-      </PageHeader>
-      <Segmented label="Console sections" value={tab} onChange={(next) => navigate('admin', { tab: next })} options={[
-        { value: 'overview', label: 'Overview', icon: 'overview' },
-        { value: 'workspaces', label: 'Workspaces', icon: 'building' },
-        { value: 'users', label: 'Users', icon: 'team' },
-        { value: 'plans', label: 'Plans & pricing', icon: 'billing' },
-        { value: 'audit', label: 'Audit log', icon: 'list' },
-      ]} />
-      {tab === 'overview' && <OverviewTab />}
-      {tab === 'workspaces' && <WorkspacesTab plans={plans} />}
-      {tab === 'users' && <UsersTab />}
-      {tab === 'plans' && <PlansTab plans={plans} reloadPlans={reloadPlans} />}
-      {tab === 'audit' && <AuditTab />}
+      <SectionHeader eyebrow="You" title="Account & security" description="Your owner sign-in, password and active sessions." />
+      <div className="cx-grid">
+        <div className="card cx-profile">
+          <Avatar name={account.user.fullName} size="lg" />
+          <div><strong>{account.user.fullName}</strong><span>{account.user.email}</span><Pill tone="info">Platform owner</Pill></div>
+          <ul className="cx-facts">
+            <li><Icon name="shield" size={15} />Signed in through your private address</li>
+            <li><Icon name="clock" size={15} />Owner sessions last 12 hours</li>
+            <li><Icon name="key" size={15} />Forgot your password? Use “Forgot password” on the sign-in page.</li>
+          </ul>
+        </div>
+        <form className="card settings-card cx-span-2" onSubmit={submit}>
+          <div className="card-head"><div><h2>Change password</h2><p>At least 12 characters. Other devices are signed out.</p></div></div>
+          <fieldset disabled={busy} className="form-grid">
+            <Field label="Current password" wide><input name="currentPassword" type="password" required autoComplete="current-password" /></Field>
+            <Field label="New password"><input name="newPassword" type="password" required minLength={12} maxLength={128} autoComplete="new-password" /></Field>
+            <Field label="Confirm new password"><input name="confirmPassword" type="password" required minLength={12} maxLength={128} autoComplete="new-password" /></Field>
+          </fieldset>
+          <div className="card-foot"><Button type="submit" variant="primary" disabled={busy}>{busy ? 'Saving…' : 'Update password'}</Button></div>
+        </form>
+      </div>
+      <div className="card">
+        <div className="card-head">
+          <div><h2>Active sessions</h2><p>Places where you’re signed in.</p></div>
+          <Button size="sm" icon="logout" onClick={signOutOthers}>Sign out other sessions</Button>
+        </div>
+        {sessions.error ? <ErrorState error={sessions.error} onRetry={sessions.reload} /> : !sessions.data ? <Skeleton rows={2} /> : (
+          <ul className="session-list">
+            {sessions.data.map((session) => (
+              <li key={session.id}>
+                <span className="empty-icon small"><Icon name="shield" size={16} /></span>
+                <div><strong>{session.current ? 'This device' : 'Another device'}</strong><small>Started {formatDateTime(session.createdAt)} · expires {formatDateTime(session.expiresAt)}</small></div>
+                {session.current && <Pill tone="success">Current</Pill>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   )
 }
 
-export default Admin
+// ---------------------------------------------------------------- System
+
+function Check({ ok, warn, title, children }) {
+  const tone = ok ? 'success' : warn ? 'warning' : 'danger'
+  return (
+    <li className={`cx-check cx-check-${tone}`}>
+      <span className="cx-check-icon"><Icon name={ok ? 'check' : 'alert'} size={15} /></span>
+      <div><strong>{title}</strong><p>{children}</p></div>
+    </li>
+  )
+}
+
+export function SystemSection() {
+  const { data, error, reload } = useLoad(() => api('/api/admin/system'), [])
+  return (
+    <div className="stack">
+      <SectionHeader eyebrow="Platform" title="System status" description="What’s set up, and what still needs doing.">
+        <Button icon="clock" onClick={reload}>Re-check</Button>
+      </SectionHeader>
+      {error ? <ErrorState error={error} onRetry={reload} /> : !data ? <Skeleton rows={5} /> : (
+        <ul className="cx-checks card">
+          <Check ok={data.database.connected && data.database.pendingMigrations?.length === 0} warn={data.database.pendingMigrations === null} title="Database">
+            {data.database.pendingMigrations?.length
+              ? <>Connected, but these updates haven’t been run yet: <b>{data.database.pendingMigrations.join(', ')}</b>. Run <code>npm run db:migrate</code> with the Production DATABASE_URL.</>
+              : 'Connected and up to date.'}
+          </Check>
+          <Check ok={data.email.configured && Boolean(data.email.from)} warn title="Email sending">
+            {data.email.configured
+              ? <>Sending through {data.email.provider} as <b>{data.email.from || 'EMAIL_FROM not set'}</b>. Partner welcome links and password resets are emailed automatically.</>
+              : <>Not set up. Partner links show in the console for you to send by hand, and password recovery needs the command line. Add <code>RESEND_API_KEY</code> and <code>EMAIL_FROM</code> in Vercel, then redeploy.</>}
+          </Check>
+          <Check ok={data.owners.count > 0} title="Owner access">
+            {data.owners.count} owner {data.owners.count === 1 ? 'address' : 'addresses'} in <code>PLATFORM_ADMIN_EMAILS</code>.
+          </Check>
+          <Check ok={data.console.pathSet} title="Private console address">{data.console.pathSet ? 'Set. Only people who know the address can reach this sign-in.' : 'ADMIN_PATH is not set.'}</Check>
+          <Check ok={Boolean(data.supportEmail)} warn title="Support email">
+            {data.supportEmail ? <>Customers’ upgrade requests go to <b>{data.supportEmail}</b>.</> : <>Set <code>SUPPORT_EMAIL</code> in Vercel so the Billing page can show where to reach you.</>}
+          </Check>
+        </ul>
+      )}
+    </div>
+  )
+}

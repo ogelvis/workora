@@ -3,7 +3,8 @@ import bcrypt from 'bcryptjs'
 import express from 'express'
 import { z } from 'zod'
 import { pool } from '../db.js'
-import { requireAuth } from '../auth.js'
+import { adminPath, platformAdminEmails, requireAuth } from '../auth.js'
+import { pendingMigrations } from '../migrations.js'
 import { HttpError, appUrl, createToken, emailSchema, route, validationError, withTransaction } from '../lib.js'
 import { emailConfigured, sendMail, welcomeEmail } from '../mail.js'
 import { findIndustry } from '../../shared/industries.js'
@@ -79,7 +80,7 @@ const orgSelect = `
   ) owner ON true`
 
 router.get('/overview', route(async (_request, response) => {
-  const [totals, byPlan, signups, audits] = await Promise.all([
+  const [totals, byPlan, signups, audits, attention] = await Promise.all([
     pool.query(`
       SELECT (SELECT count(*)::int FROM organizations) AS workspaces,
              (SELECT count(*)::int FROM users) AS users,
@@ -90,9 +91,13 @@ router.get('/overview', route(async (_request, response) => {
              (SELECT COALESCE(sum(sp.monthly_price), 0)::float FROM subscriptions s JOIN subscription_plans sp ON sp.id = s.plan_id WHERE s.status = 'active') AS mrr,
              (SELECT min(currency) FROM subscription_plans) AS currency,
              (SELECT COALESCE(sum(size_bytes), 0)::float FROM files) AS "storageBytes",
-             (SELECT count(*)::int FROM organizations WHERE created_at > now() - interval '30 days') AS "newLast30Days"`),
+             (SELECT count(*)::int FROM organizations WHERE created_at > now() - interval '30 days') AS "newLast30Days",
+             (SELECT count(*)::int FROM organizations WHERE partner) AS partners,
+             (SELECT count(*)::int FROM sheet_rows) AS records`),
     pool.query(`
-      SELECT sp.name AS plan, count(s.id)::int AS count
+      SELECT sp.name AS plan, count(s.id)::int AS count,
+             count(s.id) FILTER (WHERE s.status = 'active')::int AS active,
+             COALESCE(sum(sp.monthly_price) FILTER (WHERE s.status = 'active'), 0)::float AS revenue
       FROM subscription_plans sp LEFT JOIN subscriptions s ON s.plan_id = sp.id
       GROUP BY sp.name, sp.sort_order ORDER BY sp.sort_order`),
     pool.query(`
@@ -102,18 +107,40 @@ router.get('/overview', route(async (_request, response) => {
       GROUP BY week ORDER BY week`),
     pool.query(`SELECT id, admin_email AS "adminEmail", action, target_type AS "targetType", target_name AS "targetName", created_at AS "createdAt"
                 FROM admin_audit_log ORDER BY created_at DESC LIMIT 8`),
+    // Workspaces that need the owner's attention soon, most urgent first.
+    pool.query(`
+      SELECT o.id, o.name, o.partner, s.status, s.trial_ends_at AS "trialEndsAt", s.current_period_end AS "currentPeriodEnd",
+             CASE
+               WHEN s.status IN ('past_due', 'expired') THEN 'payment'
+               WHEN s.status = 'trial' AND s.trial_ends_at <= now() THEN 'trial_ended'
+               WHEN s.status = 'trial' AND s.trial_ends_at <= now() + interval '7 days' THEN 'trial_ending'
+               WHEN s.status = 'active' AND s.current_period_end <= now() THEN 'paid_lapsed'
+               WHEN s.status = 'active' AND s.current_period_end <= now() + interval '14 days' THEN 'paid_ending'
+               WHEN o.partner AND EXISTS (
+                 SELECT 1 FROM organization_members om JOIN users u ON u.id = om.user_id
+                 WHERE om.organization_id = o.id AND om.role = 'owner' AND u.email_verified_at IS NULL AND NOT u.password_set
+               ) THEN 'partner_pending'
+             END AS reason
+      FROM organizations o JOIN subscriptions s ON s.organization_id = o.id
+      WHERE s.status != 'suspended'
+      ORDER BY COALESCE(s.current_period_end, s.trial_ends_at, o.created_at)
+      LIMIT 200`),
   ])
-  return response.json({ totals: totals.rows[0], byPlan: byPlan.rows, weeklySignups: signups.rows, recentAudit: audits.rows })
+  return response.json({
+    totals: totals.rows[0], byPlan: byPlan.rows, weeklySignups: signups.rows, recentAudit: audits.rows,
+    attention: attention.rows.filter((row) => row.reason).slice(0, 12),
+  })
 }))
 
 router.get('/organizations', route(async (request, response) => {
-  const query = z.object({ q: z.string().max(200).optional(), status: z.enum(STATUSES).optional() }).parse(request.query)
+  const query = z.object({ q: z.string().max(200).optional(), status: z.enum(STATUSES).optional(), partner: z.enum(['1']).optional() }).parse(request.query)
   const result = await pool.query(
     `${orgSelect}
      WHERE ($1::text IS NULL OR o.name ILIKE '%' || $1 || '%' OR o.business_email ILIKE '%' || $1 || '%' OR owner.email ILIKE '%' || $1 || '%')
        AND ($2::text IS NULL OR s.status = $2)
+       AND (NOT $3 OR o.partner)
      ORDER BY o.created_at DESC LIMIT 500`,
-    [query.q || null, query.status || null],
+    [query.q || null, query.status || null, query.partner === '1'],
   )
   return response.json({ organizations: result.rows })
 }))
@@ -239,6 +266,20 @@ async function issueWelcome(db, request, { userId, organizationId, fullName, ema
 
 router.get('/email-status', route(async (_request, response) => {
   return response.json({ configured: emailConfigured() })
+}))
+
+// What's configured and what still needs doing, for the console's System page.
+router.get('/system', route(async (_request, response) => {
+  const pending = await pendingMigrations().catch(() => null)
+  const provider = process.env.RESEND_API_KEY ? 'Resend' : process.env.SMTP_HOST ? `SMTP (${process.env.SMTP_HOST})` : null
+  return response.json({
+    database: { connected: true, pendingMigrations: pending },
+    email: { configured: emailConfigured(), provider, from: (process.env.EMAIL_FROM || '').trim() || null },
+    owners: { count: platformAdminEmails().length },
+    console: { pathSet: Boolean(adminPath()) },
+    supportEmail: (process.env.SUPPORT_EMAIL || '').trim() || null,
+    sessionSecret: true,
+  })
 }))
 
 router.post('/partners', route(async (request, response) => {

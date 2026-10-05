@@ -64,6 +64,10 @@ The owner's control console has its own private sign-in at a secret address. Set
 
 Only sessions started through the secret address get console access, and they last 12 hours. Signing in on the normal page with an owner email opens that person's workspace only. Any other address shows the homepage, and checks of the secret address are rate-limited. The console has an overview (sign-ups, paying workspaces, monthly recurring revenue), workspace search with plan, payment ("paid until"), trial, suspension and deletion controls, user lookup with password-reset links, plan prices and limits, and an audit log of every admin action. Suspended workspaces are locked out until reactivated.
 
+### Owner password recovery
+
+On the private sign-in, **Forgot password?** emails a one-hour, single-use link (sent only to addresses in `PLATFORM_ADMIN_EMAILS`; the page answers the same for any email). The link opens a "Choose a new password" page that signs you straight in and ends every other session. Without email configured, the page shows the `npm run owner:password` command instead.
+
 ### Partner businesses
 
 In the console, **Workspaces → Add partner business** creates a workspace (with its industry modules, plan and access), its owner account without a password, and emails the owner a one-time link (valid 7 days). Clicking it signs them straight into their dashboard; a banner then asks them to choose a password under Settings → Security. **Send sign-in link** on any workspace issues a fresh link (older unused links stop working). If email isn't configured, the console shows the link to copy and send manually.

@@ -5,9 +5,10 @@ import { z } from 'zod'
 import { pool } from '../db.js'
 import { adminPath, createSession, destroySession, hashToken, isPlatformAdmin, platformAdminEmails, requireAuth } from '../auth.js'
 import { seedIndustry } from './sheets.js'
+import { emailConfigured, ownerResetEmail, sendMail } from '../mail.js'
 import { findIndustry } from '../../shared/industries.js'
 import {
-  HttpError, emailSchema, getSubscription, logActivity, notify, passwordSchema, route,
+  HttpError, createToken, appUrl, emailSchema, getSubscription, logActivity, notify, passwordSchema, route,
   validationError, withTransaction,
 } from '../lib.js'
 
@@ -226,6 +227,63 @@ const consoleSetupSchema = z.object({
   email: emailSchema,
   password: passwordSchema,
 }).extend(gatewaySchema.shape)
+
+// ---------------------------------------------------------------- Owner password recovery
+
+const RESET_MINUTES = 60
+
+// Emails a one-hour reset link to a listed owner address. The answer is the same whether
+// or not the address is an owner, so this page can't be used to discover who is.
+router.post('/console-forgot', authLimiter, route(async (request, response) => {
+  const parsed = z.object({ email: emailSchema }).extend(gatewaySchema.shape).safeParse(request.body)
+  if (!parsed.success) return validationError(response, parsed.error)
+  if (!isGatewayPath(parsed.data.path)) return response.status(404).json({ error: 'Not found.' })
+  if (!emailConfigured()) return response.json({ emailConfigured: false })
+  const email = parsed.data.email.toLowerCase()
+  if (isPlatformAdmin(email)) {
+    const user = await pool.query('SELECT id, full_name FROM users WHERE email = $1', [email])
+    if (user.rowCount) {
+      const { token, tokenHash } = createToken()
+      const expiresAt = new Date(Date.now() + RESET_MINUTES * 60 * 1000)
+      await pool.query('UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL', [user.rows[0].id])
+      await pool.query('INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES ($1, $2, $3)', [user.rows[0].id, tokenHash, expiresAt])
+      // The token travels in the #fragment, so it never reaches server logs.
+      const link = appUrl(request, `/${adminPath()}#reset=${token}`)
+      const delivery = await sendMail({ to: email, ...ownerResetEmail({ fullName: user.rows[0].full_name, link }) })
+      if (!delivery.sent) console.warn(`Owner reset email not sent: ${delivery.reason}`)
+    } else {
+      console.warn('Owner reset requested for a listed email with no account yet')
+    }
+  } else {
+    console.warn('Owner reset requested for an email not in PLATFORM_ADMIN_EMAILS')
+  }
+  return response.json({ emailConfigured: true })
+}))
+
+router.post('/console-reset', authLimiter, route(async (request, response) => {
+  const parsed = z.object({ token: z.string().min(20).max(200), password: passwordSchema }).extend(gatewaySchema.shape).safeParse(request.body)
+  if (!parsed.success) return validationError(response, parsed.error)
+  if (!isGatewayPath(parsed.data.path)) return response.status(404).json({ error: 'Not found.' })
+  const passwordHash = await bcrypt.hash(parsed.data.password, 12)
+  const user = await withTransaction(async (client) => {
+    const result = await client.query(
+      `SELECT r.id, r.user_id, r.expires_at, r.used_at, u.email FROM password_resets r JOIN users u ON u.id = r.user_id
+       WHERE r.token_hash = $1 FOR UPDATE OF r`,
+      [hashToken(parsed.data.token)],
+    )
+    const reset = result.rows[0]
+    if (!reset || reset.used_at || new Date(reset.expires_at) < new Date() || !isPlatformAdmin(reset.email)) {
+      throw new HttpError(410, 'This reset link is invalid or has expired. Request a new one.')
+    }
+    await client.query('UPDATE password_resets SET used_at = now() WHERE id = $1', [reset.id])
+    await client.query('UPDATE users SET password_hash = $1, password_set = true WHERE id = $2', [passwordHash, reset.user_id])
+    // Every existing session ends; whoever had the old password is signed out.
+    await client.query('DELETE FROM user_sessions WHERE user_id = $1', [reset.user_id])
+    return { id: reset.user_id, email: reset.email }
+  })
+  await startConsoleSession(user.id, user.email, 'reset the owner password', response)
+  return response.json({ ok: true })
+}))
 
 // First-time owner setup: an address in PLATFORM_ADMIN_EMAILS that has no account yet
 // chooses its password here. Once the account exists this always refuses, so it can't
