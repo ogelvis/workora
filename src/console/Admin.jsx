@@ -788,7 +788,7 @@ export function AccountSection() {
           <div><strong>{account.user.fullName}</strong><span>{account.user.email}</span><Pill tone="info">Platform owner</Pill></div>
           <ul className="cx-facts">
             <li><Icon name="shield" size={15} />Signed in through your private address</li>
-            <li><Icon name="clock" size={15} />Owner sessions last 12 hours</li>
+            <li><Icon name="clock" size={15} />Owner sessions last 30 days</li>
             <li><Icon name="key" size={15} />Forgot your password? Use “Forgot password” on the sign-in page.</li>
           </ul>
         </div>

@@ -195,7 +195,7 @@ export function ConsoleApp({ account, onSignedOut }) {
   }, [])
   const go = useCallback((tab, extra = {}) => navigate('admin', { tab, ...extra }), [navigate])
 
-  // A console session that ends (12 hours, or signed out elsewhere) returns to the sign-in.
+  // A console session that ends (after 30 days, or signed out elsewhere) returns to the sign-in.
   const expired = useCallback(() => {
     toast('Your owner session has ended. Please sign in again.', 'error')
     onSignedOut()
@@ -241,7 +241,7 @@ export function ConsoleApp({ account, onSignedOut }) {
           <button type="button" className="cx-add" onClick={addPartner}><Icon name="plus" size={16} />Add partner business</button>
           <div className="cx-me">
             <Avatar name={account.user.fullName} size="sm" />
-            <div><strong>{account.user.fullName}</strong><small>Owner · 12-hour session</small></div>
+            <div><strong>{account.user.fullName}</strong><small>Owner · stays signed in 30 days</small></div>
             <button type="button" className="cx-logout" aria-label="Sign out" title="Sign out" onClick={logout}><Icon name="logout" size={17} /></button>
           </div>
         </aside>
