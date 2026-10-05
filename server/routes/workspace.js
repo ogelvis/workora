@@ -1,6 +1,7 @@
 import express from 'express'
 import { z } from 'zod'
 import { pool } from '../db.js'
+import { runAutomations } from '../automation.js'
 import { requireAuth, requireRole } from '../auth.js'
 import {
   HttpError, MANAGERS, assertInOrg, assertMember, emailSchema, getSubscription, logActivity, notify,
@@ -191,6 +192,7 @@ router.post('/clients', managersOnly, route(async (request, response) => {
     [request.auth.organizationId, values.name, values.contactName || '', values.email || '', values.industry || '', values.status || 'Lead', request.auth.userId],
   )
   await logActivity(pool, request.auth, 'added client', 'client', values.name)
+  await runAutomations({ organizationId: request.auth.organizationId, actorId: request.auth.userId, type: 'client_created', client: result.rows[0] })
   return response.status(201).json({ client: result.rows[0] })
 }))
 
@@ -266,6 +268,7 @@ router.put('/projects/:id', managersOnly, route(async (request, response) => {
   const values = parse(projectSchema, request.body, response)
   if (!values) return undefined
   await assertInOrg(pool, 'clients', values.clientId, request.auth.organizationId, 'Client')
+  const before = await pool.query('SELECT status FROM projects WHERE id = $1 AND organization_id = $2', [request.params.id, request.auth.organizationId])
   const result = await pool.query(
     `UPDATE projects SET name = $1, description = $2, due_date = $3, status = COALESCE($4, status), client_id = $5
      WHERE id = $6 AND organization_id = $7 RETURNING id`,
@@ -274,6 +277,9 @@ router.put('/projects/:id', managersOnly, route(async (request, response) => {
   if (!result.rowCount) return response.status(404).json({ error: 'Project not found in this workspace.' })
   await logActivity(pool, request.auth, 'updated project', 'project', values.name)
   const project = await pool.query(`${projectSelect} WHERE p.id = $1`, [request.params.id])
+  if (before.rows[0] && before.rows[0].status !== project.rows[0].status) {
+    await runAutomations({ organizationId: request.auth.organizationId, actorId: request.auth.userId, type: 'project_status', project: project.rows[0] })
+  }
   return response.json({ project: project.rows[0] })
 }))
 
@@ -344,7 +350,7 @@ router.put('/tasks/:id', managersOnly, route(async (request, response) => {
   if (!values) return undefined
   const task = await withTransaction(async (client) => {
     const previous = await client.query(
-      'SELECT assignee_id FROM tasks WHERE id = $1 AND organization_id = $2 FOR UPDATE',
+      'SELECT assignee_id, status FROM tasks WHERE id = $1 AND organization_id = $2 FOR UPDATE',
       [request.params.id, request.auth.organizationId],
     )
     if (!previous.rowCount) throw new HttpError(404, 'Task not found in this workspace.')
@@ -359,8 +365,10 @@ router.put('/tasks/:id', managersOnly, route(async (request, response) => {
     await logActivity(client, request.auth, 'updated task', 'task', values.title)
     const result = await client.query(`${taskSelect} WHERE t.id = $1`, [request.params.id])
     await notifyAssignee(client, request.auth, result.rows[0], previous.rows[0].assignee_id)
-    return result.rows[0]
+    return { ...result.rows[0], completedNow: previous.rows[0].status !== 'Completed' && result.rows[0].status === 'Completed' }
   })
+  if (task.completedNow) await runAutomations({ organizationId: request.auth.organizationId, actorId: request.auth.userId, type: 'task_completed', task })
+  delete task.completedNow
   return response.json({ task })
 }))
 
@@ -368,7 +376,10 @@ router.put('/tasks/:id', managersOnly, route(async (request, response) => {
 router.patch('/tasks/:id', route(async (request, response) => {
   const values = parse(z.object({ status: z.enum(taskStatuses) }).strict(), request.body, response)
   if (!values) return undefined
+  let wasCompleted = false
   const task = await withTransaction(async (client) => {
+    const prior = await client.query('SELECT status FROM tasks WHERE id = $1 AND organization_id = $2 FOR UPDATE', [request.params.id, request.auth.organizationId])
+    wasCompleted = prior.rows[0]?.status === 'Completed'
     const updated = await client.query(
       `UPDATE tasks SET status = $1
        WHERE id = $2 AND organization_id = $3 AND ($4 OR assignee_id = $5)
@@ -395,6 +406,9 @@ router.patch('/tasks/:id', route(async (request, response) => {
     }
     return row
   })
+  if (!wasCompleted && task.status === 'Completed') {
+    await runAutomations({ organizationId: request.auth.organizationId, actorId: request.auth.userId, type: 'task_completed', task })
+  }
   return response.json({ task })
 }))
 
@@ -569,7 +583,7 @@ router.delete('/calendar/:id', managersOnly, route(async (request, response) => 
 
 router.get('/notifications', route(async (request, response) => {
   const result = await pool.query(
-    `SELECT id, title, message, resource_type AS "resourceType", resource_id AS "resourceId",
+    `SELECT id, title, message, resource_type AS "resourceType", resource_id AS "resourceId", link,
             read_at AS "readAt", created_at AS "createdAt"
      FROM notifications WHERE organization_id = $1 AND user_id = $2
      ORDER BY created_at DESC LIMIT 100`,

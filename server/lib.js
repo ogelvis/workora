@@ -52,11 +52,11 @@ export function logActivity(db, auth, action, objectType, objectName) {
   )
 }
 
-export function notify(db, organizationId, userId, { title, message = '', resourceType = null, resourceId = null }) {
+export function notify(db, organizationId, userId, { title, message = '', resourceType = null, resourceId = null, link = null }) {
   return db.query(
-    `INSERT INTO notifications (organization_id, user_id, title, message, resource_type, resource_id)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [organizationId, userId, title, message, resourceType, resourceId],
+    `INSERT INTO notifications (organization_id, user_id, title, message, resource_type, resource_id, link)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [organizationId, userId, title, message, resourceType, resourceId, link],
   )
 }
 

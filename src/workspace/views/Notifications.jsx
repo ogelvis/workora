@@ -33,7 +33,8 @@ function Notifications() {
 
   function open(notification) {
     markRead(notification)
-    if (notification.resourceType === 'task') navigate('tasks')
+    if (notification.link) window.location.hash = notification.link.replace(/^#/, '')
+    else if (notification.resourceType === 'task') navigate('tasks')
   }
 
   return (
@@ -49,7 +50,7 @@ function Notifications() {
         <ul className="card notification-list">
           {items.map((notification) => (
             <li key={notification.id} className={notification.readAt ? '' : 'unread'}>
-              <span className="note-icon"><Icon name={notification.resourceType === 'task' ? 'tasks' : 'team'} size={16} /></span>
+              <span className="note-icon"><Icon name={{ task: 'tasks', automation: 'bolt', form: 'form', sheet: 'sheet', record: 'sheet', file: 'files' }[notification.resourceType] || 'team'} size={16} /></span>
               <button type="button" className="note-body" onClick={() => open(notification)}>
                 <strong>{notification.title}</strong>
                 {notification.message && <p>{notification.message}</p>}

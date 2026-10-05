@@ -10,6 +10,7 @@ import {
 import { COLUMN_TYPES, OPTION_COLORS, itemName } from '../../../shared/industries.js'
 import { useWorkspace } from '../context.js'
 import { SHEET_COLORS, SHEET_ICONS, SheetIcon } from './Sheets.jsx'
+import { ShareModal } from '../Share.jsx'
 
 const typeInfo = Object.fromEntries(COLUMN_TYPES.map((column) => [column.type, column]))
 const blankView = { id: 'all', name: 'All records', search: '', filters: [], sort: null, groupBy: null, hidden: [] }
@@ -296,7 +297,7 @@ function ImportModal({ sheet, canDesign, onImported, onClose }) {
 
 // ---------------------------------------------------------------- Record panel
 
-function RecordPanel({ sheet, row, members, onChange, onDelete, onClose }) {
+function RecordPanel({ sheet, row, members, canEdit, canComment, onChange, onDelete, onShare, onClose }) {
   const { account, toast } = useWorkspace()
   const [events, setEvents] = useState(null)
   const [comment, setComment] = useState('')
@@ -335,7 +336,8 @@ function RecordPanel({ sheet, row, members, onChange, onDelete, onClose }) {
         <SheetIcon icon={sheet.icon} color={sheet.color} size="sm" />
         <div><span className="eyebrow">{sheet.name}</span><h2>{title || 'Untitled record'}</h2></div>
         <IconButton icon="copy" label="Copy record" onClick={async () => toast(await copyText(sheet.columns.map((column) => `${column.name}: ${displayValue(column, row.data[column.id], members)}`).join('\n')) ? 'Record copied' : 'Copy failed', 'success')} />
-        <IconButton icon="trash" label="Delete record" onClick={() => onDelete(row)} />
+        <IconButton icon="link" label="Share record" onClick={onShare} />
+        {canEdit && <IconButton icon="trash" label="Delete record" onClick={() => onDelete(row)} />}
         <IconButton icon="close" label="Close" onClick={onClose} />
       </header>
       <div className="record-tabs">
@@ -347,20 +349,22 @@ function RecordPanel({ sheet, row, members, onChange, onDelete, onClose }) {
           {sheet.columns.map((column) => (
             <label key={`${column.id}-${row.updatedAt}`} className="record-field">
               <span><Icon name={typeInfo[column.type]?.icon || 'text'} size={13} />{column.name}</span>
-              <CellEditor column={column} value={row.data[column.id]} members={members} inline={false} autoFocus={false}
-                onCommit={(value) => { if (JSON.stringify(value ?? null) !== JSON.stringify(row.data[column.id] ?? null)) onChange(row, column.id, value) }} />
+              {canEdit ? (
+                <CellEditor column={column} value={row.data[column.id]} members={members} inline={false} autoFocus={false}
+                  onCommit={(value) => { if (JSON.stringify(value ?? null) !== JSON.stringify(row.data[column.id] ?? null)) onChange(row, column.id, value) }} />
+              ) : <div className="record-value"><CellView column={column} value={row.data[column.id]} members={members} /></div>}
             </label>
           ))}
           <p className="record-meta">Added {formatDateTime(row.createdAt)} · Updated {timeAgo(row.updatedAt)}</p>
         </div>
       ) : (
         <div className="record-activity">
-          <form className="comment-box" onSubmit={send}>
+          {canComment ? <form className="comment-box" onSubmit={send}>
             <Avatar name={account.user.fullName} size="sm" />
             <textarea value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Discuss this record with your team…" rows={2} maxLength={4000}
               onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) send(event) }} />
             <IconButton icon="send" label="Post comment" type="submit" disabled={!comment.trim()} />
-          </form>
+          </form> : <p className="muted-note">You can view this record’s history but not comment on it.</p>}
           <ol className="timeline">
             {(events || []).map((item) => (
               <li key={item.id} className={`timeline-item kind-${item.kind}`}>
@@ -462,6 +466,9 @@ function Sheet() {
   if (!sheet) return <div className="card chart-skeleton" />
 
   const canDesign = sheet.canDesign
+  const permission = sheet.permission || 'edit'
+  const canEdit = ['edit', 'full'].includes(permission)
+  const canComment = permission !== 'view'
   const patchView = (changes) => setView((current) => ({ ...current, ...changes }))
 
   async function saveSheet(changes, message) {
@@ -573,7 +580,9 @@ function Sheet() {
           <p>{sheet.description || 'Custom sheet'} · {rows.length.toLocaleString()} records</p>
         </div>
         <div className="sheet-actions">
-          <Button icon="file_in" onClick={() => setModal({ type: 'import' })}>Import</Button>
+          {permission !== 'full' && <span className={`perm-badge perm-${permission}`}><Icon name={canEdit ? 'edit' : canComment ? 'chat' : 'eye'} size={13} />{canEdit ? 'Can edit' : canComment ? 'Can comment' : 'View only'}</span>}
+          <Button icon="link" onClick={() => setModal({ type: 'share' })}>Share</Button>
+          {canEdit && <Button icon="file_in" onClick={() => setModal({ type: 'import' })}>Import</Button>}
           <Popover label="Export" icon="download" align="right">
             {(close) => (
               <div className="menu-list static">
@@ -604,10 +613,10 @@ function Sheet() {
         {sheet.views.map((item) => (
           <span key={item.id} className={`view-tab${view.id === item.id ? ' active' : ''}`}>
             <button type="button" role="tab" aria-selected={view.id === item.id} onClick={() => setView(item)}><Icon name="eye" size={14} />{item.name}</button>
-            {view.id === item.id && <button type="button" className="view-x" aria-label={`Remove view ${item.name}`} onClick={() => deleteView(item)}><Icon name="close" size={12} /></button>}
+            {view.id === item.id && canEdit && <button type="button" className="view-x" aria-label={`Remove view ${item.name}`} onClick={() => deleteView(item)}><Icon name="close" size={12} /></button>}
           </span>
         ))}
-        <button type="button" className="view-save" onClick={() => setModal({ type: 'view' })}><Icon name="plus" size={14} />{view.id === 'all' ? 'Save as view' : 'Update view'}</button>
+{canEdit &&         <button type="button" className="view-save" onClick={() => setModal({ type: 'view' })}><Icon name="plus" size={14} />{view.id === 'all' ? 'Save as view' : 'Update view'}</button>}
       </div>
 
       <div className="sheet-toolbar">
@@ -681,7 +690,7 @@ function Sheet() {
           </div>
         </Popover>
         <span className="toolbar-spacer" />
-        <Button variant="primary" icon="plus" onClick={() => addRow()}>New {itemName(sheet).toLowerCase()}</Button>
+        {canEdit && <Button variant="primary" icon="plus" onClick={() => addRow()}>New {itemName(sheet).toLowerCase()}</Button>}
       </div>
 
       {selectedRows.length > 0 && (
@@ -690,7 +699,7 @@ function Sheet() {
           <button type="button" onClick={async () => toast(await copyText(toTsv(visibleColumns, selectedRows, members)) ? 'Copied — paste anywhere' : 'Copy failed', 'success')}><Icon name="copy" size={15} />Copy</button>
           <button type="button" onClick={() => exportXlsx(`${sheet.name} (selection)`, visibleColumns, selectedRows, members)}><Icon name="download" size={15} />Excel</button>
           <button type="button" onClick={() => exportCsv(`${sheet.name} (selection)`, visibleColumns, selectedRows, members)}><Icon name="download" size={15} />CSV</button>
-          <button type="button" className="danger" onClick={() => deleteRows(selectedRows.map((row) => row.id))}><Icon name="trash" size={15} />Delete</button>
+          {canEdit && <button type="button" className="danger" onClick={() => deleteRows(selectedRows.map((row) => row.id))}><Icon name="trash" size={15} />Delete</button>}
           <button type="button" onClick={() => setSelected(new Set())}>Clear</button>
         </div>
       )}
@@ -750,7 +759,7 @@ function Sheet() {
                     const isEditing = editing?.rowId === row.id && editing.columnId === column.id
                     return (
                       <td key={column.id} className={`grid-cell type-${column.type}${isEditing ? ' editing' : ''}`}
-                        onClick={() => { if (column.type === 'checkbox') updateCell(row, column.id, !row.data[column.id]); else if (!isEditing) setEditing({ rowId: row.id, columnId: column.id }) }}>
+                        onClick={() => { if (!canEdit) { setOpenRow(row.id); return } if (column.type === 'checkbox') updateCell(row, column.id, !row.data[column.id]); else if (!isEditing) setEditing({ rowId: row.id, columnId: column.id }) }}>
                         {isEditing ? (
                           <CellEditor column={column} value={row.data[column.id]} members={members}
                             onCommit={(value) => { setEditing(null); if (JSON.stringify(value ?? null) !== JSON.stringify(row.data[column.id] ?? null)) updateCell(row, column.id, value) }}
@@ -762,11 +771,13 @@ function Sheet() {
                   {canDesign && <td className="grid-add" />}
                 </tr>
               ))}
-              <tr className="add-row">
-                <td colSpan={visibleColumns.length + 2}>
-                  <button type="button" onClick={() => addRow(prefillFor(group))}><Icon name="plus" size={14} />New record{groupColumn && group.key ? ` in ${group.label}` : ''}</button>
-                </td>
-              </tr>
+              {canEdit && (
+                <tr className="add-row">
+                  <td colSpan={visibleColumns.length + 2}>
+                    <button type="button" onClick={() => addRow(prefillFor(group))}><Icon name="plus" size={14} />New record{groupColumn && group.key ? ` in ${group.label}` : ''}</button>
+                  </td>
+                </tr>
+              )}
             </tbody>
           ))}
           {numberColumns.length > 0 && filtered.length > 0 && (
@@ -787,14 +798,16 @@ function Sheet() {
           <div className="grid-empty">
             <SheetIcon icon={sheet.icon} color={sheet.color} size="lg" />
             <strong>{sheet.name} is ready</strong>
-            <p>Add your first record, or import an Excel or CSV file you already have.</p>
-            <div className="row-gap"><Button variant="primary" icon="plus" onClick={() => addRow()}>New record</Button><Button icon="file_in" onClick={() => setModal({ type: 'import' })}>Import file</Button></div>
+            <p>{canEdit ? 'Add your first record, or import an Excel or CSV file you already have.' : 'No records have been added yet.'}</p>
+            {canEdit && <div className="row-gap"><Button variant="primary" icon="plus" onClick={() => addRow()}>New record</Button><Button icon="file_in" onClick={() => setModal({ type: 'import' })}>Import file</Button></div>}
           </div>
         )}
         {rows.length > 0 && !filtered.length && <div className="grid-empty"><strong>No records match this view</strong><Button onClick={() => setView(blankView)}>Clear filters</Button></div>}
       </div>
 
-      {activeRow && <RecordPanel sheet={sheet} row={activeRow} members={members} onChange={updateCell} onDelete={(row) => deleteRows([row.id])} onClose={() => setOpenRow(null)} />}
+      {activeRow && <RecordPanel sheet={sheet} row={activeRow} members={members} canEdit={canEdit} canComment={canComment} onChange={updateCell} onDelete={(row) => deleteRows([row.id])} onShare={() => setModal({ type: 'share-record', row: activeRow })} onClose={() => setOpenRow(null)} />}
+      {modal?.type === 'share' && <ShareModal type="sheet" id={sheet.id} name={sheet.name} sheet={sheet} onSheetSaved={(changes) => saveSheet(changes)} onClose={() => setModal(null)} />}
+      {modal?.type === 'share-record' && <ShareModal type="record" id={modal.row.id} name={displayValue(sheet.columns[0], modal.row.data[sheet.columns[0]?.id], members) || 'this record'} onClose={() => setModal(null)} />}
       {modal?.type === 'column' && <ColumnModal column={modal.column} onSave={(column) => saveColumn(column, modal.index)} onClose={() => setModal(null)} />}
       {modal?.type === 'view' && (
         <Modal title={view.id === 'all' ? 'Save view' : 'Update view'} onClose={() => setModal(null)} width={420}>

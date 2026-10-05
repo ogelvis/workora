@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
 import { ADMINS, MANAGERS, route } from '../lib.js'
+import { permissionFor } from '../sheet-values.js'
 
 const router = express.Router()
 router.use(requireAuth)
@@ -39,15 +40,16 @@ router.get('/search', route(async (request, response) => {
       [organizationId, pattern, ADMINS.includes(role)],
     ),
     pool.query(
-      `SELECT id, name, icon, color FROM sheets
-       WHERE organization_id = $1 AND (name ILIKE $2 OR description ILIKE $2) ORDER BY position LIMIT 6`,
+      `SELECT id, name, icon, color, access, created_by AS "createdById" FROM sheets
+       WHERE organization_id = $1 AND (name ILIKE $2 OR description ILIKE $2) ORDER BY position LIMIT 20`,
       [organizationId, pattern],
     ),
     pool.query(
-      `SELECT r.id, r.sheet_id AS "sheetId", s.name AS "sheetName", s.icon, s.color, s.columns, r.data
+      `SELECT r.id, r.sheet_id AS "sheetId", s.name AS "sheetName", s.icon, s.color, s.columns, r.data,
+              s.access, s.created_by AS "createdById"
        FROM sheet_rows r JOIN sheets s ON s.id = r.sheet_id
        WHERE r.organization_id = $1 AND EXISTS (SELECT 1 FROM jsonb_each_text(r.data) v WHERE v.value ILIKE $2)
-       ORDER BY r.updated_at DESC LIMIT 8`,
+       ORDER BY r.updated_at DESC LIMIT 40`,
       [organizationId, pattern],
     ),
     pool.query(
@@ -75,9 +77,11 @@ router.get('/search', route(async (request, response) => {
     projects: projects.rows,
     tasks: tasks.rows,
     files: files.rows,
-    sheets: sheets.rows,
+    // Sheets someone has no access to stay out of their results.
+    sheets: sheets.rows.filter((sheet) => permissionFor(request.auth, sheet) !== 'none').slice(0, 6)
+      .map(({ access: _access, createdById: _creator, ...sheet }) => sheet),
     // Show each record by its first column, plus the field that matched.
-    records: records.rows.map(({ columns, data, ...row }) => {
+    records: records.rows.filter((row) => permissionFor(request.auth, row) !== 'none').slice(0, 8).map(({ columns, data, access: _access, createdById: _creator, ...row }) => {
       const first = columns[0]
       const hit = columns.find((column) => String(data[column.id] ?? '').toLowerCase().includes(needle))
       return {

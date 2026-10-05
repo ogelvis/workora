@@ -72,6 +72,9 @@ const paths = {
   file_in: <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M12 11v6M9.5 14.5 12 17l2.5-2.5" /></>,
   layout: <><rect x="3.5" y="4" width="17" height="16" rx="2" /><path d="M3.5 10h17M10 10v10" /></>,
   helmet: <><path d="M4 17h16M5 17v-3a7 7 0 0 1 14 0v3M10 7.2V11M14 7.2V11" /><path d="M3 17h18v2H3z" /></>,
+  form: <><rect x="4.5" y="3.5" width="15" height="17" rx="2" /><path d="M8 8h8M8 12h8M8 16h5" /></>,
+  play: <path d="M7 4.5v15l12-7.5z" />,
+  pause: <path d="M8 5v14M16 5v14" />,
   bolt: <path d="M13 3 5 13.5h6L10 21l8-10.5h-6z" />,
 }
 
