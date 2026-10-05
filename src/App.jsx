@@ -6,6 +6,8 @@ import { ConsoleApp, ConsoleLogin } from './console/Console.jsx'
 import Icon from './components/Icon.jsx'
 import { ToastProvider } from './components/ui.jsx'
 import { api } from './lib/api.js'
+import PublicForm from './public/PublicForm.jsx'
+import PublicShare from './public/PublicShare.jsx'
 
 // Invite, reset and partner welcome links arrive as ?invite=…, ?reset=… or ?welcome=…;
 // read them once, then clean the URL.
@@ -74,7 +76,20 @@ function Welcome({ token, onSignedIn, onFailed }) {
   )
 }
 
+// Public pages anyone with the link can open: /f/<token> (a form) and /s/<token> (a share link).
+function readPublicPage() {
+  const match = window.location.pathname.match(/^\/(f|s)\/([A-Za-z0-9_-]{8,64})\/?$/)
+  return match ? { kind: match[1], token: match[2] } : null
+}
+
 function App() {
+  const [publicPage] = useState(readPublicPage)
+  if (publicPage?.kind === 'f') return <PublicForm token={publicPage.token} />
+  if (publicPage?.kind === 's') return <PublicShare token={publicPage.token} />
+  return <Main />
+}
+
+function Main() {
   const [linkToken] = useState(readLinkToken)
   const [entryPath] = useState(readEntryPath)
   const [account, setAccount] = useState(null)

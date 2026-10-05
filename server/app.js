@@ -11,7 +11,10 @@ import adminRoutes, { publicRouter as publicRoutes } from './routes/admin.js'
 import authRoutes from './routes/auth.js'
 import chatRoutes from './routes/chat.js'
 import fileRoutes from './routes/files.js'
+import automationRoutes from './routes/automations.js'
+import formRoutes, { publicFormRouter } from './routes/forms.js'
 import searchRoutes from './routes/search.js'
+import shareRoutes, { publicShareRouter } from './routes/shares.js'
 import sheetRoutes from './routes/sheets.js'
 import teamRoutes from './routes/team.js'
 import workspaceRoutes from './routes/workspace.js'
@@ -59,6 +62,9 @@ app.get('/api/health', async (_request, response, next) => {
 
 app.use('/api/auth', authRoutes)
 app.use('/api', publicRoutes)
+// Public form and share pages: no sign-in, so they go before the signed-in routers.
+app.use('/api', publicFormRouter)
+app.use('/api', publicShareRouter)
 app.use('/api/admin', adminRoutes)
 app.use('/api', workspaceRoutes)
 app.use('/api', teamRoutes)
@@ -66,6 +72,9 @@ app.use('/api', fileRoutes)
 app.use('/api', chatRoutes)
 app.use('/api', sheetRoutes)
 app.use('/api', searchRoutes)
+app.use('/api', formRoutes)
+app.use('/api', automationRoutes)
+app.use('/api', shareRoutes)
 app.use('/api', (_request, response) => response.status(404).json({ error: 'Not found.' }))
 
 const distDir = path.resolve(rootDir, '..', 'dist')

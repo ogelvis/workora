@@ -10,6 +10,8 @@ import { industryFor, itemName } from '../../shared/industries.js'
 import { CreateMenu, SearchPalette } from './Command.jsx'
 import Sheets, { NewSheetModal } from './views/Sheets.jsx'
 import Sheet from './views/Sheet.jsx'
+import Forms from './views/Forms.jsx'
+import Automations from './views/Automations.jsx'
 import Overview from './views/Overview.jsx'
 import Projects from './views/Projects.jsx'
 import Tasks from './views/Tasks.jsx'
@@ -27,7 +29,7 @@ import './ovo.css'
 const views = {
   overview: Overview, projects: Projects, tasks: Tasks, clients: Clients, campaigns: Campaigns,
   calendar: Calendar, files: Files, vault: Files, chat: Chat, notifications: Notifications,
-  billing: Billing, settings: Settings, sheets: Sheets, sheet: Sheet,
+  billing: Billing, settings: Settings, sheets: Sheets, sheet: Sheet, forms: Forms, automations: Automations,
 }
 
 // Which store collections each record type touches, so a save refreshes only what changed.
@@ -205,7 +207,9 @@ function Workspace({ account, setAccount, onSignedOut }) {
     { label: 'Records', items: [
       ...data.sheets.filter((sheet) => sheet.pinned).slice(0, 6).map((sheet) => ({ label: itemName(sheet), icon: sheet.icon, tone: sheet.color, onSelect: () => navigate('sheet', { id: sheet.id, add: Date.now() }) })),
       { label: 'New sheet', icon: 'sheet', tone: 'teal', onSelect: () => setNewSheet('') },
-    ] },
+      { label: 'Form', icon: 'form', tone: 'blue', onSelect: () => navigate('forms') },
+      manager && { label: 'Automation', icon: 'bolt', tone: 'amber', onSelect: () => navigate('automations') },
+    ].filter(Boolean) },
     { label: 'Share', items: [
       { label: 'Upload file', icon: 'upload', tone: 'sky', onSelect: () => navigate('files') },
       { label: 'Message', icon: 'chat', tone: 'violet', onSelect: () => navigate('chat') },

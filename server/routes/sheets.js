@@ -1,10 +1,11 @@
-import { randomBytes } from 'node:crypto'
 import express from 'express'
 import { z } from 'zod'
 import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
-import { HttpError, MANAGERS, logActivity, route, withTransaction } from '../lib.js'
+import { HttpError, logActivity, route, withTransaction } from '../lib.js'
 import { COLUMN_TYPES, OPTION_COLORS, SHEET_TEMPLATES, industryFor } from '../../shared/industries.js'
+import { allows, clean, columnId, permissionFor } from '../sheet-values.js'
+import { runAutomations } from '../automation.js'
 
 const router = express.Router()
 router.use(requireAuth)
@@ -14,10 +15,6 @@ const MAX_ROWS = 10000
 const MAX_IMPORT_ROWS = 5000
 const TYPES = COLUMN_TYPES.map((column) => column.type)
 const COLORS = [...OPTION_COLORS, 'indigo']
-
-export function columnId() {
-  return `c_${randomBytes(5).toString('hex')}`
-}
 
 const optionSchema = z.object({ label: z.string().trim().min(1).max(60), color: z.enum(COLORS).catch('slate') })
 const columnSchema = z.object({
@@ -45,6 +42,10 @@ const sheetSchema = z.object({
   columns: z.array(columnSchema).max(60).optional(),
   views: z.array(viewSchema).max(20).optional(),
   templateKey: z.string().max(40).optional(),
+  access: z.object({
+    default: z.enum(['none', 'view', 'comment', 'edit']),
+    members: z.record(z.uuid(), z.enum(['none', 'view', 'comment', 'edit', 'full'])),
+  }).optional(),
 })
 const cellValue = z.union([z.string().max(5000), z.number().finite(), z.boolean(), z.null()])
 const rowSchema = z.object({ data: z.record(z.string().max(40), cellValue) })
@@ -53,55 +54,41 @@ function withIds(columns) {
   return columns.map((column) => ({ ...column, id: column.id || columnId() }))
 }
 
-// Keep only known columns and store each value in the shape its column expects.
-function clean(data, columns) {
-  const result = {}
-  for (const column of columns) {
-    if (!(column.id in data)) continue
-    let value = data[column.id]
-    if (value === '' || value === undefined) value = null
-    if (value !== null) {
-      if (column.type === 'number' || column.type === 'currency') {
-        const parsed = typeof value === 'number' ? value : Number(String(value).replace(/[^0-9.-]/g, ''))
-        value = Number.isFinite(parsed) && String(value).trim() !== '' ? parsed : null
-      } else if (column.type === 'checkbox') {
-        value = value === true || ['true', 'yes', '1', 'y', '✓', 'x'].includes(String(value).trim().toLowerCase())
-      } else if (column.type === 'date') {
-        const text = String(value).trim()
-        const iso = /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : (() => {
-          const parsed = new Date(text)
-          return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10)
-        })()
-        value = iso
-      } else {
-        value = String(value)
-      }
-    }
-    result[column.id] = value
-  }
-  return result
-}
-
 const sheetColumns = `s.id, s.name, s.description, s.icon, s.color, s.columns, s.views, s.template_key AS "templateKey",
-  s.pinned, s.position, s.created_by AS "createdById", s.created_at AS "createdAt", s.updated_at AS "updatedAt"`
-const rowColumns = `r.id, r.data, r.position, r.created_at AS "createdAt", r.updated_at AS "updatedAt",
-  r.created_by AS "createdById", r.updated_by AS "updatedById"`
-
-async function loadSheet(db, id, organizationId, { lock = false } = {}) {
-  const result = await db.query(
-    `SELECT ${sheetColumns} FROM sheets s WHERE s.id = $1 AND s.organization_id = $2 ${lock ? 'FOR UPDATE' : ''}`,
-    [id, organizationId],
+  s.pinned, s.position, s.access, s.created_by AS "createdById", s.created_at AS "createdAt", s.updated_at AS "updatedAt"`
+// A record as the app shows it, re-read after automations may have changed it.
+async function freshRow(id) {
+  const result = await pool.query(
+    `SELECT id, data, position, created_at AS "createdAt", updated_at AS "updatedAt", created_by AS "createdById", updated_by AS "updatedById"
+     FROM sheet_rows WHERE id = $1`,
+    [id],
   )
-  if (!result.rowCount) throw new HttpError(404, 'Sheet not found.')
   return result.rows[0]
 }
 
-function canDesign(auth, sheet) {
-  return MANAGERS.includes(auth.role) || sheet.createdById === auth.userId
+const rowColumns = `r.id, r.data, r.position, r.created_at AS "createdAt", r.updated_at AS "updatedAt",
+  r.created_by AS "createdById", r.updated_by AS "updatedById"`
+
+const NEEDED_MESSAGE = {
+  view: 'You don’t have access to this sheet.',
+  comment: 'You can view this sheet but not comment on it.',
+  edit: 'You can view this sheet but not change its records.',
+  full: 'Only people with full access can change this sheet’s structure or settings.',
 }
 
-function assertCanDesign(auth, sheet) {
-  if (!canDesign(auth, sheet)) throw new HttpError(403, 'Only managers or the person who created this sheet can change its structure.')
+// Loads a sheet the caller may use at the `need` level. A sheet someone can't see at all
+// answers 404, so its existence isn't revealed.
+export async function loadSheet(db, id, auth, { lock = false, need = 'view' } = {}) {
+  const result = await db.query(
+    `SELECT ${sheetColumns} FROM sheets s WHERE s.id = $1 AND s.organization_id = $2 ${lock ? 'FOR UPDATE' : ''}`,
+    [id, auth.organizationId],
+  )
+  const sheet = result.rows[0]
+  if (!sheet) throw new HttpError(404, 'Sheet not found.')
+  const permission = permissionFor(auth, sheet)
+  if (permission === 'none') throw new HttpError(404, 'Sheet not found.')
+  if (!allows(permission, need)) throw new HttpError(403, NEEDED_MESSAGE[need])
+  return { ...sheet, permission }
 }
 
 // Creates the sheets an industry starts with. Used on sign-up and from the template gallery.
@@ -135,7 +122,10 @@ router.get('/sheets', route(async (request, response) => {
      ORDER BY s.pinned DESC, s.position, s.created_at`,
     [request.auth.organizationId],
   )
-  return response.json({ sheets: result.rows.map(({ columns, views: _views, ...sheet }) => ({ ...sheet, columnCount: columns.length })) })
+  const visible = result.rows
+    .map((sheet) => ({ ...sheet, permission: permissionFor(request.auth, sheet) }))
+    .filter((sheet) => sheet.permission !== 'none')
+  return response.json({ sheets: visible.map(({ columns, views: _views, access: _access, ...sheet }) => ({ ...sheet, columnCount: columns.length })) })
 }))
 
 router.post('/sheets', route(async (request, response) => {
@@ -164,33 +154,32 @@ router.post('/sheets', route(async (request, response) => {
     await logActivity(client, request.auth, 'created sheet', 'sheet', values.name)
     return sheetId
   })
-  return response.status(201).json({ sheet: await loadSheet(pool, id, organizationId) })
+  return response.status(201).json({ sheet: await loadSheet(pool, id, request.auth) })
 }))
 
 router.get('/sheets/:id', route(async (request, response) => {
-  const sheet = await loadSheet(pool, request.params.id, request.auth.organizationId)
+  const sheet = await loadSheet(pool, request.params.id, request.auth)
   const rows = await pool.query(
     `SELECT ${rowColumns} FROM sheet_rows r WHERE r.sheet_id = $1 ORDER BY r.position, r.created_at LIMIT ${MAX_ROWS}`,
     [sheet.id],
   )
-  return response.json({ sheet: { ...sheet, canDesign: canDesign(request.auth, sheet) }, rows: rows.rows })
+  return response.json({ sheet: { ...sheet, canDesign: sheet.permission === 'full' }, rows: rows.rows })
 }))
 
 router.put('/sheets/:id', route(async (request, response) => {
   const values = sheetSchema.partial().parse(request.body)
-  const { organizationId } = request.auth
   await withTransaction(async (client) => {
-    const sheet = await loadSheet(client, request.params.id, organizationId, { lock: true })
-    // Anyone can save views; columns, details and the shared sidebar are for designers.
-    const structural = ['name', 'description', 'icon', 'color', 'columns', 'pinned'].some((key) => key in values)
-    if (structural) assertCanDesign(request.auth, sheet)
+    // Saving views needs edit access; columns, details, access and the shared sidebar need full access.
+    const structural = ['name', 'description', 'icon', 'color', 'columns', 'pinned', 'access'].some((key) => key in values)
+    const sheet = await loadSheet(client, request.params.id, request.auth, { lock: true, need: structural ? 'full' : 'edit' })
     const columns = values.columns ? withIds(values.columns) : sheet.columns
     if (new Set(columns.map((column) => column.id)).size !== columns.length) throw new HttpError(400, 'Column ids must be unique.')
     await client.query(
-      `UPDATE sheets SET name = $1, description = $2, icon = $3, color = $4, columns = $5, views = $6, pinned = $7, updated_at = now()
-       WHERE id = $8`,
+      `UPDATE sheets SET name = $1, description = $2, icon = $3, color = $4, columns = $5, views = $6, pinned = $7, access = $8, updated_at = now()
+       WHERE id = $9`,
       [values.name ?? sheet.name, values.description ?? sheet.description, values.icon ?? sheet.icon, values.color ?? sheet.color,
-        JSON.stringify(columns), JSON.stringify(values.views ?? sheet.views), values.pinned ?? sheet.pinned, sheet.id],
+        JSON.stringify(columns), JSON.stringify(values.views ?? sheet.views), values.pinned ?? sheet.pinned,
+        JSON.stringify(values.access ?? sheet.access), sheet.id],
     )
     // A column whose type changed keeps only values that still make sense.
     const changed = columns.filter((column) => {
@@ -210,14 +199,14 @@ router.put('/sheets/:id', route(async (request, response) => {
       await client.query('UPDATE sheet_rows SET data = data - $1::text[] WHERE sheet_id = $2', [removed, sheet.id])
     }
   })
-  return response.json({ sheet: await loadSheet(pool, request.params.id, organizationId) })
+  return response.json({ sheet: await loadSheet(pool, request.params.id, request.auth) })
 }))
 
 router.post('/sheets/:id/duplicate', route(async (request, response) => {
   const { withRows } = z.object({ withRows: z.boolean().optional() }).parse(request.body || {})
   const { organizationId, userId } = request.auth
   const id = await withTransaction(async (client) => {
-    const sheet = await loadSheet(client, request.params.id, organizationId)
+    const sheet = await loadSheet(client, request.params.id, request.auth)
     const count = await client.query('SELECT count(*)::int AS count FROM sheets WHERE organization_id = $1', [organizationId])
     if (count.rows[0].count >= MAX_SHEETS) throw new HttpError(400, `A workspace can have up to ${MAX_SHEETS} sheets.`)
     const copy = await client.query(
@@ -236,12 +225,11 @@ router.post('/sheets/:id/duplicate', route(async (request, response) => {
     await logActivity(client, request.auth, 'duplicated sheet', 'sheet', sheet.name)
     return copy.rows[0].id
   })
-  return response.status(201).json({ sheet: await loadSheet(pool, id, organizationId) })
+  return response.status(201).json({ sheet: await loadSheet(pool, id, request.auth) })
 }))
 
 router.delete('/sheets/:id', route(async (request, response) => {
-  const sheet = await loadSheet(pool, request.params.id, request.auth.organizationId)
-  assertCanDesign(request.auth, sheet)
+  const sheet = await loadSheet(pool, request.params.id, request.auth, { need: 'full' })
   await pool.query('DELETE FROM sheets WHERE id = $1', [sheet.id])
   await logActivity(pool, request.auth, 'deleted sheet', 'sheet', sheet.name)
   return response.status(204).end()
@@ -253,13 +241,18 @@ router.delete('/sheets/:id', route(async (request, response) => {
 router.get('/records/recent', route(async (request, response) => {
   const result = await pool.query(
     `SELECT r.id, r.sheet_id AS "sheetId", r.data, r.updated_at AS "updatedAt", s.name AS "sheetName", s.icon, s.color, s.columns,
+            s.access, s.created_by AS "createdById",
             u.full_name AS "updatedBy"
      FROM sheet_rows r JOIN sheets s ON s.id = r.sheet_id LEFT JOIN users u ON u.id = r.updated_by
-     WHERE r.organization_id = $1 ORDER BY r.updated_at DESC LIMIT 8`,
+     WHERE r.organization_id = $1 ORDER BY r.updated_at DESC LIMIT 40`,
     [request.auth.organizationId],
   )
   return response.json({
-    records: result.rows.map(({ columns, data, ...row }) => ({ ...row, title: String((columns[0] && data[columns[0].id]) ?? '') })),
+    // Records from sheets someone can't open stay out of their home page.
+    records: result.rows
+      .filter((row) => permissionFor(request.auth, row) !== 'none')
+      .slice(0, 8)
+      .map(({ columns, data, access: _access, createdById: _creator, ...row }) => ({ ...row, title: String((columns[0] && data[columns[0].id]) ?? '') })),
   })
 }))
 
@@ -276,8 +269,8 @@ function describeChange(before, after, columns) {
 router.post('/sheets/:id/rows', route(async (request, response) => {
   const { data } = rowSchema.parse(request.body)
   const { organizationId, userId } = request.auth
-  const row = await withTransaction(async (client) => {
-    const sheet = await loadSheet(client, request.params.id, organizationId, { lock: true })
+  const { row, sheet } = await withTransaction(async (client) => {
+    const sheet = await loadSheet(client, request.params.id, request.auth, { lock: true, need: 'edit' })
     const stats = await client.query('SELECT count(*)::int AS count, COALESCE(max(position), 0) AS last FROM sheet_rows WHERE sheet_id = $1', [sheet.id])
     if (stats.rows[0].count >= MAX_ROWS) throw new HttpError(400, `A sheet can hold up to ${MAX_ROWS.toLocaleString()} records.`)
     const result = await client.query(
@@ -291,16 +284,17 @@ router.post('/sheets/:id/rows', route(async (request, response) => {
       [result.rows[0].id, organizationId, userId, `Added to ${sheet.name}`],
     )
     await client.query('UPDATE sheets SET updated_at = now() WHERE id = $1', [sheet.id])
-    return result.rows[0]
+    return { row: result.rows[0], sheet }
   })
-  return response.status(201).json({ row })
+  await runAutomations({ organizationId, actorId: userId, type: 'record_created', sheet, row })
+  return response.status(201).json({ row: await freshRow(row.id) })
 }))
 
 router.patch('/sheets/:id/rows/:rowId', route(async (request, response) => {
   const { data } = rowSchema.parse(request.body)
   const { organizationId, userId } = request.auth
-  const row = await withTransaction(async (client) => {
-    const sheet = await loadSheet(client, request.params.id, organizationId)
+  const { row, sheet, changed } = await withTransaction(async (client) => {
+    const sheet = await loadSheet(client, request.params.id, request.auth, { need: 'edit' })
     const current = await client.query('SELECT data FROM sheet_rows WHERE id = $1 AND sheet_id = $2 FOR UPDATE', [request.params.rowId, sheet.id])
     if (!current.rowCount) throw new HttpError(404, 'Record not found.')
     const changes = clean(data, sheet.columns)
@@ -317,14 +311,21 @@ router.patch('/sheets/:id/rows/:rowId', route(async (request, response) => {
         [request.params.rowId, organizationId, userId, summary],
       )
     }
-    return result.rows[0]
+    const changed = Object.fromEntries(Object.keys(changes)
+      .filter((key) => JSON.stringify(current.rows[0].data[key] ?? null) !== JSON.stringify(changes[key] ?? null))
+      .map((key) => [key, changes[key]]))
+    return { row: result.rows[0], sheet, changed }
   })
+  if (Object.keys(changed).length) {
+    await runAutomations({ organizationId, actorId: userId, type: 'record_updated', sheet, row, changes: changed })
+    return response.json({ row: await freshRow(row.id) })
+  }
   return response.json({ row })
 }))
 
 router.post('/sheets/:id/rows/delete', route(async (request, response) => {
   const { ids } = z.object({ ids: z.array(z.uuid()).min(1).max(MAX_ROWS) }).parse(request.body)
-  const sheet = await loadSheet(pool, request.params.id, request.auth.organizationId)
+  const sheet = await loadSheet(pool, request.params.id, request.auth, { need: 'edit' })
   const result = await pool.query('DELETE FROM sheet_rows WHERE sheet_id = $1 AND id = ANY($2::uuid[])', [sheet.id, ids])
   if (result.rowCount) await logActivity(pool, request.auth, `deleted ${result.rowCount} record${result.rowCount === 1 ? '' : 's'} from`, 'sheet', sheet.name)
   return response.json({ deleted: result.rowCount })
@@ -339,14 +340,14 @@ router.post('/sheets/:id/import', route(async (request, response) => {
   }).parse(request.body)
   const { organizationId, userId } = request.auth
   const imported = await withTransaction(async (client) => {
-    const sheet = await loadSheet(client, request.params.id, organizationId, { lock: true })
+    const sheet = await loadSheet(client, request.params.id, request.auth, { lock: true, need: 'edit' })
     const columns = [...sheet.columns]
     const mapping = headers.map((header) => {
       if (!header) return null
       const match = columns.find((column) => column.name.toLowerCase() === header.toLowerCase())
       if (match) return match.id
       if (!addColumns || columns.length >= 60) return null
-      if (!canDesign(request.auth, sheet)) return null
+      if (sheet.permission !== 'full') return null
       const column = { id: columnId(), name: header, type: 'text' }
       columns.push(column)
       return column.id
@@ -386,7 +387,7 @@ router.post('/sheets/:id/import', route(async (request, response) => {
 }))
 
 router.get('/sheets/:id/rows/:rowId/timeline', route(async (request, response) => {
-  const sheet = await loadSheet(pool, request.params.id, request.auth.organizationId)
+  const sheet = await loadSheet(pool, request.params.id, request.auth)
   const exists = await pool.query('SELECT 1 FROM sheet_rows WHERE id = $1 AND sheet_id = $2', [request.params.rowId, sheet.id])
   if (!exists.rowCount) throw new HttpError(404, 'Record not found.')
   const events = await pool.query(
@@ -400,7 +401,7 @@ router.get('/sheets/:id/rows/:rowId/timeline', route(async (request, response) =
 
 router.post('/sheets/:id/rows/:rowId/comments', route(async (request, response) => {
   const { body } = z.object({ body: z.string().trim().min(1).max(4000) }).parse(request.body)
-  const sheet = await loadSheet(pool, request.params.id, request.auth.organizationId)
+  const sheet = await loadSheet(pool, request.params.id, request.auth, { need: 'comment' })
   const exists = await pool.query('SELECT 1 FROM sheet_rows WHERE id = $1 AND sheet_id = $2', [request.params.rowId, sheet.id])
   if (!exists.rowCount) throw new HttpError(404, 'Record not found.')
   const result = await pool.query(

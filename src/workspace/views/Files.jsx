@@ -4,6 +4,7 @@ import { Avatar, Button, IconButton, Meter, PageHeader } from '../../components/
 import { api, uploadFile } from '../../lib/api.js'
 import { formatBytes, timeAgo } from '../../lib/format.js'
 import { useWorkspace } from '../context.js'
+import { ShareModal } from '../Share.jsx'
 
 function fileKind(file) {
   const extension = file.name.split('.').pop().toLowerCase()
@@ -23,6 +24,7 @@ function Files({ vault }) {
   const [folder, setFolder] = useState('')
   const [uploading, setUploading] = useState(null)
   const [dragging, setDragging] = useState(false)
+  const [sharing, setSharing] = useState(null)
   const input = useRef(null)
 
   const load = useCallback(async () => {
@@ -152,6 +154,7 @@ function Files({ vault }) {
                     <td className="muted">{timeAgo(file.createdAt)}</td>
                     <td className="muted">{formatBytes(file.sizeBytes)}</td>
                     <td className="cell-actions">
+                      {!vault && <IconButton icon="link" label={`Share ${file.name}`} onClick={() => setSharing(file)} />}
                       <a className="icon-btn" href={`/api/files/${file.id}/download`} aria-label={`Download ${file.name}`} title="Download"><Icon name="download" size={17} /></a>
                       {canDelete(file) && <IconButton icon="trash" label={`Delete ${file.name}`} onClick={() => removeFile(file)} />}
                     </td>
@@ -181,6 +184,7 @@ function Files({ vault }) {
           </span>
         </div>
       )}
+      {sharing && <ShareModal type="file" id={sharing.id} name={sharing.name} onClose={() => setSharing(null)} />}
       {dragging && <div className="drop-overlay"><Icon name="upload" size={28} />Drop to upload{folder ? ` to ${folder}` : ''}</div>}
     </div>
   )
