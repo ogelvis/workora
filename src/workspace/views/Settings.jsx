@@ -331,6 +331,17 @@ function Account() {
   const [pending, setPending] = useState('')
   const needsPassword = account.passwordSet === false
 
+  async function toggleProductUpdates(event) {
+    const productUpdates = event.target.checked
+    try {
+      await api('/api/auth/profile', { method: 'PUT', body: { productUpdates } })
+      setAccount((current) => ({ ...current, productUpdates }))
+      toast(productUpdates ? 'You’ll get OVO product updates by email' : 'You won’t get product update emails')
+    } catch (error) {
+      toast(error.message, 'error')
+    }
+  }
+
   async function saveName(event) {
     event.preventDefault()
     setSavingName(true)
@@ -385,6 +396,13 @@ function Account() {
         <fieldset disabled={savingName} className="form-grid single">
           <Field label="Full name"><input name="fullName" required minLength={2} maxLength={120} defaultValue={account.user.fullName} autoComplete="name" /></Field>
         </fieldset>
+        <div className="settings-section">
+          <span className="field-label">Emails from OVO</span>
+          <label className="pref-row">
+            <input type="checkbox" checked={account.productUpdates !== false} onChange={toggleProductUpdates} />
+            <span><strong>Product updates</strong><small>New features and improvements. Policy, security and service notices are always sent, because they affect your account.</small></span>
+          </label>
+        </div>
         <div className="card-foot"><button type="submit" className="btn btn-primary" disabled={savingName}>{savingName ? 'Saving…' : 'Save name'}</button></div>
       </form>
       <form className="card settings-card" onSubmit={changeEmail}>

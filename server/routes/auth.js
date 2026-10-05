@@ -340,13 +340,14 @@ router.post('/logout', route(async (request, response) => {
 router.get('/me', requireAuth, route(async (request, response) => {
   const [subscription, user] = await Promise.all([
     getSubscription(pool, request.auth.organizationId),
-    pool.query('SELECT password_set FROM users WHERE id = $1', [request.auth.userId]),
+    pool.query('SELECT password_set, product_updates FROM users WHERE id = $1', [request.auth.userId]),
   ])
   return response.json({
     ...accountPayload(request.auth),
     organization: { id: request.auth.organizationId, name: request.auth.organizationName, industry: request.auth.organizationIndustry },
     platformAdmin: request.auth.platformAdmin,
     passwordSet: user.rows[0]?.password_set ?? true,
+    productUpdates: user.rows[0]?.product_updates ?? true,
     subscription: subscription && {
       plan: subscription.plan_name,
       status: subscription.status,
@@ -395,10 +396,18 @@ router.post('/sessions/revoke-others', requireAuth, route(async (request, respon
 
 // ---------------------------------------------------------------- My account
 router.put('/profile', requireAuth, route(async (request, response) => {
-  const { fullName } = z.object({ fullName: z.string().trim().min(2, 'Enter your full name.').max(120) }).parse(request.body)
-  await pool.query('UPDATE users SET full_name = $1 WHERE id = $2', [fullName, request.auth.userId])
-  if (request.auth.organizationId) await logActivity(pool, request.auth, 'updated their profile', 'user', fullName)
-  return response.json({ user: { id: request.auth.userId, fullName, email: request.auth.email } })
+  const values = z.object({
+    fullName: z.string().trim().min(2, 'Enter your full name.').max(120).optional(),
+    productUpdates: z.boolean().optional(),
+  }).parse(request.body)
+  const result = await pool.query(
+    `UPDATE users SET full_name = COALESCE($1, full_name), product_updates = COALESCE($2, product_updates)
+     WHERE id = $3 RETURNING full_name, product_updates`,
+    [values.fullName ?? null, values.productUpdates ?? null, request.auth.userId],
+  )
+  const fullName = result.rows[0].full_name
+  if (values.fullName && request.auth.organizationId) await logActivity(pool, request.auth, 'updated their profile', 'user', fullName)
+  return response.json({ user: { id: request.auth.userId, fullName, email: request.auth.email }, productUpdates: result.rows[0].product_updates })
 }))
 
 // Email-change links are signed rather than stored: they carry the user, the new address and

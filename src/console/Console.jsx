@@ -6,6 +6,7 @@ import { WorkspaceContext, readHash } from '../workspace/context.js'
 import {
   AccountSection, AddPartner, AuditSection, OverviewSection, PlansSection, SystemSection, UsersSection, WorkspacesSection,
 } from './Admin.jsx'
+import { AnnouncementsSection } from './Announcements.jsx'
 import './console.css'
 
 // A reset link arrives as /<private path>#reset=<token>; read it once and clear it from the address bar.
@@ -157,6 +158,7 @@ const SECTIONS = [
     { key: 'workspaces', label: 'Workspaces', icon: 'building', tone: 'blue' },
     { key: 'partners', label: 'Partners', icon: 'deal', tone: 'pink' },
     { key: 'users', label: 'People', icon: 'team', tone: 'teal' },
+    { key: 'announcements', label: 'Announcements', icon: 'bell', tone: 'rose' },
   ] },
   { group: 'Business', items: [
     { key: 'plans', label: 'Plans & pricing', icon: 'billing', tone: 'amber' },
@@ -258,6 +260,7 @@ export function ConsoleApp({ account, onSignedOut }) {
             {section === 'workspaces' && <WorkspacesSection onAddPartner={addPartner} refreshKey={refreshKey} />}
             {section === 'partners' && <WorkspacesSection partnersOnly onAddPartner={addPartner} refreshKey={refreshKey} />}
             {section === 'users' && <UsersSection />}
+            {section === 'announcements' && <AnnouncementsSection />}
             {section === 'plans' && <PlansSection />}
             {section === 'audit' && <AuditSection />}
             {section === 'account' && <AccountSection />}

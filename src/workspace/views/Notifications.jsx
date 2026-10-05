@@ -50,7 +50,7 @@ function Notifications() {
         <ul className="card notification-list">
           {items.map((notification) => (
             <li key={notification.id} className={notification.readAt ? '' : 'unread'}>
-              <span className="note-icon"><Icon name={{ task: 'tasks', automation: 'bolt', form: 'form', sheet: 'sheet', record: 'sheet', file: 'files' }[notification.resourceType] || 'team'} size={16} /></span>
+              <span className="note-icon"><Icon name={{ task: 'tasks', automation: 'bolt', form: 'form', sheet: 'sheet', record: 'sheet', file: 'files', announcement: 'sparkle' }[notification.resourceType] || 'team'} size={16} /></span>
               <button type="button" className="note-body" onClick={() => open(notification)}>
                 <strong>{notification.title}</strong>
                 {notification.message && <p>{notification.message}</p>}
