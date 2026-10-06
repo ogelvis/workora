@@ -15,6 +15,7 @@ import automationRoutes from './routes/automations.js'
 import formRoutes, { publicFormRouter } from './routes/forms.js'
 import searchRoutes from './routes/search.js'
 import announcementRoutes from './routes/announcements.js'
+import billingRoutes, { publicBillingRouter } from './routes/billing.js'
 import shareRoutes, { publicShareRouter } from './routes/shares.js'
 import sheetRoutes from './routes/sheets.js'
 import teamRoutes from './routes/team.js'
@@ -37,7 +38,11 @@ app.set('trust proxy', 1)
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'same-site' } }))
 app.use(cookieParser())
 // Sheet imports carry a whole spreadsheet; everything else stays small.
-const smallJson = express.json({ limit: '64kb' })
+// Paystack webhooks are verified against the exact bytes received, so keep them.
+const smallJson = express.json({
+  limit: '64kb',
+  verify: (request, _response, buffer) => { if (request.originalUrl === '/api/billing/paystack/webhook') request.rawBody = buffer },
+})
 const importJson = express.json({ limit: '4mb' })
 app.use((request, response, next) => (/^\/api\/sheets\/[^/]+\/import$/.test(request.path) ? importJson : smallJson)(request, response, next))
 app.use(express.urlencoded({ extended: false, limit: '16kb' }))
@@ -66,6 +71,7 @@ app.use('/api', publicRoutes)
 // Public form and share pages: no sign-in, so they go before the signed-in routers.
 app.use('/api', publicFormRouter)
 app.use('/api', publicShareRouter)
+app.use('/api', publicBillingRouter)
 app.use('/api/admin', adminRoutes)
 app.use('/api', workspaceRoutes)
 app.use('/api', teamRoutes)
@@ -77,6 +83,7 @@ app.use('/api', formRoutes)
 app.use('/api', automationRoutes)
 app.use('/api', shareRoutes)
 app.use('/api', announcementRoutes)
+app.use('/api', billingRoutes)
 app.use('/api', (_request, response) => response.status(404).json({ error: 'Not found.' }))
 
 const distDir = path.resolve(rootDir, '..', 'dist')

@@ -556,3 +556,19 @@ button.chip { border: 0; }
 .terms-links a { align-items: center; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); display: flex; font-size: 0.86rem; font-weight: 650; gap: 8px; justify-content: center; padding: 11px; text-decoration: none; }
 .terms-links a:hover { border-color: var(--brand); color: var(--brand); }
 .terms-card .btn { justify-content: center; margin: 0; width: 100%; }
+
+/* ------------------------------------------------------------------ Paystack billing */
+.plan button.plan-pay { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 700; }
+.plan button.plan-pay:hover:not(:disabled) { background: var(--brand-hover); }
+.plan button.plan-pay:disabled { opacity: 0.7; }
+.plans-head { align-items: flex-end; display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; }
+.notice-secure { background: var(--success-soft); color: var(--ink); }
+.notice-secure .icon { color: var(--success); }
+.pay-result { align-items: center; border-radius: 14px; display: flex; font-size: 0.9rem; font-weight: 600; gap: 10px; padding: 14px 16px; }
+.pay-result .text-link { margin-left: auto; }
+.pay-success { background: var(--success-soft); color: var(--success); }
+.pay-info { background: var(--brand-soft); color: var(--brand-hover); }
+.pay-danger { background: var(--danger-soft); color: var(--danger); }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; }
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.table-wrap .table { min-width: 640px; }

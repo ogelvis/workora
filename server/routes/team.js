@@ -1,4 +1,5 @@
 import express from 'express'
+import { paystackEnabled } from './billing.js'
 import { z } from 'zod'
 import { pool } from '../db.js'
 import { requireAuth, requireRole } from '../auth.js'
@@ -237,7 +238,7 @@ router.get('/billing', adminsOnly, route(async (request, response) => {
     },
     usage: usage.rows[0],
     plans: plans.rows,
-    paymentsEnabled: false,
+    paymentsEnabled: paystackEnabled(),
     supportEmail: process.env.SUPPORT_EMAIL || null,
   })
 }))

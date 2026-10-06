@@ -854,6 +854,13 @@ export function SystemSection() {
               ? <>Sending through {data.email.provider} as <b>{data.email.from || 'EMAIL_FROM not set'}</b>. Partner welcome links and password resets are emailed automatically.</>
               : <>Not set up. Partner links show in the console for you to send by hand, and password recovery needs the command line. Add <code>RESEND_API_KEY</code> and <code>EMAIL_FROM</code> in Vercel, then redeploy.</>}
           </Check>
+          <Check ok={data.payments?.paystack && data.payments.mode === 'live'} warn title="Online payments (Paystack)">
+            {!data.payments?.paystack
+              ? <>Not set up. Workspaces see “request a plan” buttons instead of checkout. Add <code>PAYSTACK_SECRET_KEY</code> in Vercel, then redeploy.</>
+              : data.payments.mode === 'live'
+                ? 'Live. Workspaces can pay by card, bank transfer or USSD, and plans activate automatically.'
+                : <>Connected in <b>test mode</b> — no real money moves. Switch to your <code>sk_live_</code> key when you’re ready to take payments.</>}
+          </Check>
           <Check ok={data.owners.count > 0} title="Owner access">
             {data.owners.count} owner {data.owners.count === 1 ? 'address' : 'addresses'} in <code>PLATFORM_ADMIN_EMAILS</code>.
           </Check>
