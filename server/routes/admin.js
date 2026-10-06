@@ -9,6 +9,7 @@ import { HttpError, appUrl, createToken, emailSchema, route, validationError, wi
 import { ANNOUNCEMENT_CATEGORIES, announcementEmail, emailConfigured, sendBatch, sendMail, welcomeEmail } from '../mail.js'
 import { findIndustry } from '../../shared/industries.js'
 import { seedIndustry } from './sheets.js'
+import { paystackEnabled } from './billing.js'
 
 // Public plan catalogue for the landing page.
 export const publicRouter = express.Router()
@@ -278,6 +279,7 @@ router.get('/system', route(async (_request, response) => {
     owners: { count: platformAdminEmails().length },
     console: { pathSet: Boolean(adminPath()) },
     supportEmail: (process.env.SUPPORT_EMAIL || '').trim() || null,
+    payments: { paystack: paystackEnabled(), mode: (process.env.PAYSTACK_SECRET_KEY || '').trim().startsWith('sk_live_') ? 'live' : 'test' },
     sessionSecret: true,
   })
 }))

@@ -8,6 +8,7 @@ import { adminPath, createSession, destroySession, hashToken, isPlatformAdmin, p
 import { seedIndustry } from './sheets.js'
 import { emailChangedEmail, emailConfigured, ownerResetEmail, sendMail, verifyEmailChangeEmail } from '../mail.js'
 import { findIndustry } from '../../shared/industries.js'
+import { TERMS_VERSION } from '../../shared/legal.js'
 import {
   HttpError, createToken, appUrl, emailSchema, getSubscription, logActivity, notify, passwordSchema, route,
   validationError, withTransaction,
@@ -30,6 +31,7 @@ const registerSchema = z.object({
   fullName: z.string().trim().min(2).max(120),
   email: emailSchema,
   password: passwordSchema,
+  acceptTerms: z.literal(true, { error: 'Please accept the Terms of Use and Privacy Policy to continue.' }),
 })
 
 const loginSchema = z.object({
@@ -41,6 +43,7 @@ const acceptInviteSchema = z.object({
   token: z.string().min(20).max(200),
   fullName: z.string().trim().min(2).max(120),
   password: passwordSchema,
+  acceptTerms: z.literal(true, { error: 'Please accept the Terms of Use and Privacy Policy to continue.' }),
 })
 
 const resetSchema = z.object({
@@ -85,10 +88,10 @@ router.post('/register', authLimiter, route(async (request, response) => {
       [values.organizationName, values.businessEmail.toLowerCase(), industry],
     )
     const user = reuse
-      ? await client.query('SELECT id, full_name, email FROM users WHERE id = $1', [existing.id])
+      ? await client.query('UPDATE users SET terms_accepted_at = now(), terms_version = $2 WHERE id = $1 RETURNING id, full_name, email', [existing.id, TERMS_VERSION])
       : await client.query(
-        'INSERT INTO users (full_name, email, password_hash) VALUES ($1, $2, $3) RETURNING id, full_name, email',
-        [values.fullName, email, passwordHash],
+        'INSERT INTO users (full_name, email, password_hash, terms_accepted_at, terms_version) VALUES ($1, $2, $3, now(), $4) RETURNING id, full_name, email',
+        [values.fullName, email, passwordHash, TERMS_VERSION],
       )
     const organizationId = organization.rows[0].id
     const userId = user.rows[0].id
@@ -340,7 +343,7 @@ router.post('/logout', route(async (request, response) => {
 router.get('/me', requireAuth, route(async (request, response) => {
   const [subscription, user] = await Promise.all([
     getSubscription(pool, request.auth.organizationId),
-    pool.query('SELECT password_set, product_updates FROM users WHERE id = $1', [request.auth.userId]),
+    pool.query('SELECT password_set, product_updates, terms_version FROM users WHERE id = $1', [request.auth.userId]),
   ])
   return response.json({
     ...accountPayload(request.auth),
@@ -348,6 +351,8 @@ router.get('/me', requireAuth, route(async (request, response) => {
     platformAdmin: request.auth.platformAdmin,
     passwordSet: user.rows[0]?.password_set ?? true,
     productUpdates: user.rows[0]?.product_updates ?? true,
+    termsAccepted: user.rows[0]?.terms_version === TERMS_VERSION,
+    termsVersion: TERMS_VERSION,
     subscription: subscription && {
       plan: subscription.plan_name,
       status: subscription.status,
@@ -392,6 +397,14 @@ router.post('/sessions/revoke-others', requireAuth, route(async (request, respon
     [request.auth.userId, request.auth.sessionId],
   )
   return response.json({ revoked: result.rowCount })
+}))
+
+// People who joined before the current terms (or before terms existed) accept them once here.
+router.post('/accept-terms', requireAuth, route(async (request, response) => {
+  z.object({ version: z.literal(TERMS_VERSION, { error: 'These terms have been updated. Reload the page to see the latest version.' }) }).parse(request.body)
+  await pool.query('UPDATE users SET terms_accepted_at = now(), terms_version = $1 WHERE id = $2', [TERMS_VERSION, request.auth.userId])
+  if (request.auth.organizationId) await logActivity(pool, request.auth, 'accepted the Terms of Use and Privacy Policy', 'user', request.auth.fullName)
+  return response.json({ termsAccepted: true })
 }))
 
 // ---------------------------------------------------------------- My account
@@ -541,11 +554,14 @@ router.post('/accept-invite', authLimiter, route(async (request, response) => {
       throw new HttpError(409, 'This email already belongs to an OVO workspace. Sign in instead.')
     } else if (existing.rowCount) {
       userId = existing.rows[0].id
-      await client.query('UPDATE users SET full_name = $1, password_hash = $2 WHERE id = $3', [values.fullName, passwordHash, userId])
+      await client.query(
+        'UPDATE users SET full_name = $1, password_hash = $2, terms_accepted_at = now(), terms_version = $4 WHERE id = $3',
+        [values.fullName, passwordHash, userId, TERMS_VERSION],
+      )
     } else {
       const user = await client.query(
-        'INSERT INTO users (full_name, email, password_hash) VALUES ($1, $2, $3) RETURNING id',
-        [values.fullName, invitation.email, passwordHash],
+        'INSERT INTO users (full_name, email, password_hash, terms_accepted_at, terms_version) VALUES ($1, $2, $3, now(), $4) RETURNING id',
+        [values.fullName, invitation.email, passwordHash, TERMS_VERSION],
       )
       userId = user.rows[0].id
     }

@@ -93,3 +93,7 @@
   .auth-main { justify-content: flex-start; padding: 28px 16px 40px; }
   .auth-back { position: static; align-self: flex-start; margin-bottom: 18px; }
 }
+
+.auth-terms { align-items: flex-start; color: var(--muted); cursor: pointer; display: flex; font-size: 0.84rem; gap: 10px; line-height: 1.5; }
+.auth-terms input { accent-color: var(--brand); flex-shrink: 0; height: 17px; margin-top: 2px; width: 17px; }
+.auth-terms a { color: var(--brand); font-weight: 650; text-decoration: underline; text-underline-offset: 2px; }
