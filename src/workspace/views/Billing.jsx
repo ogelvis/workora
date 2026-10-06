@@ -4,11 +4,25 @@ import { Meter, PageHeader, Pill, Segmented } from '../../components/ui.jsx'
 import { api } from '../../lib/api.js'
 import { capitalize, formatBytes, formatDateTime, formatPrice } from '../../lib/format.js'
 import { useWorkspace } from '../context.js'
+import { AddPeopleModal, PayModal } from '../Pay.jsx'
+import { planPeople } from '../../lib/plans.js'
 
 const planCopy = {
+  Free: { label: 'Try it out', blurb: 'For very small teams getting organised.' },
   Starter: { label: 'A place to start', blurb: 'For small teams bringing their work together.' },
   Business: { label: 'For teams in motion', blurb: 'More room and capabilities for growing teams.' },
   Enterprise: { label: 'Built around you', blurb: 'Room for larger teams and advanced needs.' },
+}
+
+// What's included beyond people and storage, from the plan's feature limits.
+function featureList(features = {}) {
+  const count = (value, noun) => (value === null || value === undefined ? `Unlimited ${noun}s` : `${value} ${value === 1 ? noun : `${noun}s`}`)
+  return [
+    count(features.forms, 'form'),
+    count(features.automations, 'automation'),
+    features.reports === false ? 'Your own task updates' : 'Team daily & weekly reports',
+    features.chatHistoryDays ? `${features.chatHistoryDays}-day chat history` : 'Full chat history',
+  ]
 }
 
 function Usage({ label, value, max, format = (number) => number }) {
@@ -65,7 +79,8 @@ function Billing() {
   const [billing, setBilling] = useState(null)
   const [payments, setPayments] = useState(null)
   const [interval, setInterval] = useState('monthly')
-  const [paying, setPaying] = useState('')
+  const [paying, setPaying] = useState(null)
+  const [addingPeople, setAddingPeople] = useState(false)
   const [now] = useState(() => Date.now())
   const result = PAYMENT_MESSAGES[params.payment]
 
@@ -80,16 +95,6 @@ function Billing() {
     if (params.payment === 'success') api('/api/auth/me').then(setAccount).catch(() => {})
   }, [params.payment, setAccount])
 
-  async function pay(plan) {
-    setPaying(plan.name)
-    try {
-      const { authorizationUrl } = await api('/api/billing/checkout', { method: 'POST', body: { plan: plan.name, interval } })
-      window.location.assign(authorizationUrl)
-    } catch (error) {
-      toast(error.message, 'error')
-      setPaying('')
-    }
-  }
 
   async function checkPending() {
     const pending = (payments || []).filter((payment) => payment.status === 'pending')
@@ -136,8 +141,13 @@ function Billing() {
                 ? `${trialDays} ${trialDays === 1 ? 'day' : 'days'} left · trial ends ${new Date(subscription.trialEndsAt).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}`
                 : subscription.currentPeriodEnd
                   ? `Paid until ${new Date(subscription.currentPeriodEnd).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}.`
-                  : 'Your subscription is active.'}
+                  : subscription.plan === 'Free' ? 'Free forever. Upgrade any time for more people, storage and features.' : 'Your subscription is active.'}
           </p>
+          {subscription.status === 'active' && subscription.extraUserPrice && subscription.currentPeriodEnd && new Date(subscription.currentPeriodEnd) > now && billing.paymentsEnabled && subscription.userLimit < subscription.maxUsers ? (
+            <button type="button" className="btn btn-secondary plan-add-people" onClick={() => setAddingPeople(true)}>
+              <Icon name="team" size={16} />Add people · {formatPrice(subscription.extraUserPrice, subscription.currency)} each/month
+            </button>
+          ) : null}
           {billing.paymentsEnabled ? (
             <div className="notice notice-secure">
               <Icon name="shield" size={16} />
@@ -157,7 +167,7 @@ function Billing() {
         <div className="card">
           <div className="card-head"><div><h2>Usage</h2><p>Limits are enforced for members, projects and storage.</p></div></div>
           <div className="usage-list">
-            <Usage label="Members (incl. pending invites)" value={usage.members + usage.pendingInvites} max={subscription.userLimit} />
+            <Usage label="People (incl. pending invites)" value={usage.members + usage.pendingInvites} max={subscription.userLimit} />
             <Usage label="Projects" value={usage.projects} max={subscription.projectLimit} />
             <Usage label="Storage" value={usage.storageBytes} max={subscription.storageLimitBytes} format={formatBytes} />
           </div>
@@ -179,16 +189,17 @@ function Billing() {
                 <h3>{plan.name}</h3>
                 <p>{copy.blurb}</p>
                 <p className="plan-price">{plan.monthlyPrice !== null ? <>{formatPrice(plan.monthlyPrice, plan.currency)} <span>/ month</span></> : 'Custom pricing'}</p>
-                {plan.yearlyPrice !== null && <p className="plan-yearly">or {formatPrice(plan.yearlyPrice, plan.currency)} per year</p>}
+                {plan.yearlyPrice > 0 && <p className="plan-yearly">or {formatPrice(plan.yearlyPrice, plan.currency)} per year</p>}
                 <ul>
-                  <li><Icon name="check" size={14} />{plan.userLimit >= 2147483647 ? 'Unlimited members' : `Up to ${plan.userLimit} members`}</li>
+                  <li><Icon name="check" size={14} />{planPeople(plan)}</li>
                   <li><Icon name="check" size={14} />{formatBytes(plan.storageLimitBytes)} storage</li>
                   <li><Icon name="check" size={14} />{plan.projectLimit ? `${plan.projectLimit} projects` : 'Unlimited projects'}</li>
+                  {featureList(plan.features).map((item) => <li key={item}><Icon name="check" size={14} />{item}</li>)}
                 </ul>
-                {billing.paymentsEnabled && (interval === 'yearly' ? plan.yearlyPrice : plan.monthlyPrice) ? (
-                  <button type="button" className="plan-pay" disabled={Boolean(paying)} onClick={() => pay(plan)}>
-                    {paying === plan.name ? 'Opening Paystack…'
-                      : current && subscription.status === 'active' ? `Renew · ${formatPrice(interval === 'yearly' ? plan.yearlyPrice : plan.monthlyPrice, plan.currency)}`
+                {plan.name === 'Free' ? <button type="button" disabled>{current ? 'Your current plan' : 'Automatic when a paid plan ends'}</button>
+                : billing.paymentsEnabled && (interval === 'yearly' ? plan.yearlyPrice : plan.monthlyPrice) ? (
+                  <button type="button" className="plan-pay" onClick={() => setPaying(plan.name)}>
+                    {current && subscription.status === 'active' ? `Renew · ${formatPrice(interval === 'yearly' ? plan.yearlyPrice : plan.monthlyPrice, plan.currency)}`
                         : `${current ? 'Pay for' : subscription.status !== 'active' || (plan.monthlyPrice || 0) > (plans.find((item) => item.name === subscription.plan)?.monthlyPrice || 0) ? 'Upgrade to' : 'Switch to'} ${plan.name} · ${formatPrice(interval === 'yearly' ? plan.yearlyPrice : plan.monthlyPrice, plan.currency)}`}
                   </button>
                 ) : current || !billing.supportEmail
@@ -200,6 +211,8 @@ function Billing() {
         </div>
       </section>
       <PaymentHistory payments={payments} />
+      {paying && <PayModal plan={paying} interval={interval} onClose={() => setPaying(null)} />}
+      {addingPeople && <AddPeopleModal billing={billing} onClose={() => setAddingPeople(false)} />}
     </div>
   )
 }

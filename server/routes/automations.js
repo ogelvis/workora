@@ -2,7 +2,7 @@ import express from 'express'
 import { z } from 'zod'
 import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
-import { HttpError, MANAGERS, logActivity, route } from '../lib.js'
+import { HttpError, MANAGERS, assertPlanCount, logActivity, route } from '../lib.js'
 import { TRIGGERS } from '../automation.js'
 import { loadSheet } from './sheets.js'
 
@@ -84,6 +84,7 @@ router.post('/automations', managersOnly, route(async (request, response) => {
   await validate(values, request.auth)
   const count = await pool.query('SELECT count(*)::int AS count FROM automations WHERE organization_id = $1', [request.auth.organizationId])
   if (count.rows[0].count >= 100) throw new HttpError(400, 'A workspace can have up to 100 automations.')
+  await assertPlanCount(pool, request.auth.organizationId, 'automations', 'automations', 'automation')
   const result = await pool.query(
     `INSERT INTO automations (organization_id, name, enabled, trigger, actions, created_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
     [request.auth.organizationId, values.name, values.enabled ?? true, JSON.stringify(values.trigger), JSON.stringify(values.actions), request.auth.userId],

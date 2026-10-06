@@ -17,6 +17,7 @@ import searchRoutes from './routes/search.js'
 import announcementRoutes from './routes/announcements.js'
 import billingRoutes, { publicBillingRouter } from './routes/billing.js'
 import reportRoutes from './routes/reports.js'
+import uploadRoutes from './routes/uploads.js'
 import shareRoutes, { publicShareRouter } from './routes/shares.js'
 import sheetRoutes from './routes/sheets.js'
 import teamRoutes from './routes/team.js'
@@ -86,6 +87,7 @@ app.use('/api', shareRoutes)
 app.use('/api', announcementRoutes)
 app.use('/api', billingRoutes)
 app.use('/api', reportRoutes)
+app.use('/api', uploadRoutes)
 app.use('/api', (_request, response) => response.status(404).json({ error: 'Not found.' }))
 
 const distDir = path.resolve(rootDir, '..', 'dist')

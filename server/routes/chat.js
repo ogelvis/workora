@@ -2,8 +2,9 @@ import express from 'express'
 import { z } from 'zod'
 import { pool } from '../db.js'
 import { requireAuth, requireRole } from '../auth.js'
-import { MANAGERS, HttpError, logActivity, route, validationError, withTransaction } from '../lib.js'
+import { MANAGERS, HttpError, featuresFor, logActivity, route, validationError, withTransaction } from '../lib.js'
 import { MAX_FILE_BYTES, assertStorage, uploadedName } from './files.js'
+import { deleteObjects, downloadUrl } from '../storage.js'
 
 const router = express.Router()
 router.use(requireAuth)
@@ -18,10 +19,46 @@ const channelSchema = z.object({
 const messageSchema = z.object({ body: z.string().trim().min(1).max(4000) })
 
 // A message can carry one shared document.
+// The Free plan shows recent history only ($2 = days, or null for everything). Older messages are kept, just hidden.
+const historyFilter = 'AND ($2::int IS NULL OR m.created_at > now() - make_interval(days => $2::int))'
+
 const attachmentJson = `CASE WHEN a.id IS NULL THEN NULL ELSE json_build_object(
   'id', a.id, 'name', a.name, 'mimeType', a.mime_type, 'sizeBytes', a.size_bytes::float) END AS attachment`
 const attachmentColumns = `a.id, a.name, a.mime_type AS "mimeType", a.size_bytes::float AS "sizeBytes", a.created_at AS "createdAt", u.full_name AS "uploadedBy"`
 const rawUpload = express.raw({ type: 'application/octet-stream', limit: MAX_FILE_BYTES })
+
+// Creates the message and its attachment; data (in the database) or storageKey (in R2) holds the bytes.
+export async function addChannelAttachment(client, auth, channelId, upload) {
+  const inserted = await client.query(
+    `INSERT INTO chat_messages (organization_id, channel_id, user_id, body)
+     VALUES ($1, $2, $3, $4) RETURNING id, body, created_at AS "createdAt", user_id AS "userId"`,
+    [auth.organizationId, channelId, auth.userId, upload.caption || `Shared ${upload.name}`],
+  )
+  const attachment = await client.query(
+    `INSERT INTO chat_attachments (organization_id, channel_id, message_id, name, mime_type, size_bytes, data, storage_key, uploaded_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, name, mime_type AS "mimeType", size_bytes::float AS "sizeBytes"`,
+    [auth.organizationId, channelId, inserted.rows[0].id, upload.name, upload.mimeType, upload.size, upload.data || null, upload.storageKey || null, auth.userId],
+  )
+  return { ...inserted.rows[0], userName: auth.fullName, attachment: attachment.rows[0] }
+}
+
+export async function addDirectAttachment(client, auth, conversation, upload) {
+  const inserted = await client.query(
+    `INSERT INTO direct_messages (conversation_id, sender_id, body) VALUES ($1, $2, $3)
+     RETURNING id, body, created_at AS "createdAt", sender_id AS "userId"`,
+    [conversation.id, auth.userId, upload.caption || `Shared ${upload.name}`],
+  )
+  const attachment = await client.query(
+    `INSERT INTO chat_attachments (organization_id, conversation_id, message_id, name, mime_type, size_bytes, data, storage_key, uploaded_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, name, mime_type AS "mimeType", size_bytes::float AS "sizeBytes"`,
+    [auth.organizationId, conversation.id, inserted.rows[0].id, upload.name, upload.mimeType, upload.size, upload.data || null, upload.storageKey || null, auth.userId],
+  )
+  await client.query(
+    `UPDATE direct_conversations SET last_message_at = $2, ${participantColumn(conversation, auth.userId)} = $2 WHERE id = $1`,
+    [conversation.id, inserted.rows[0].createdAt],
+  )
+  return { ...inserted.rows[0], userName: auth.fullName, attachment: attachment.rows[0] }
+}
 
 function readUpload(request) {
   const name = uploadedName(request)
@@ -32,7 +69,7 @@ function readUpload(request) {
   return { name, caption, mimeType: (request.get('x-file-type') || 'application/octet-stream').slice(0, 120), data: request.body }
 }
 
-async function assertChannel(organizationId, channelId) {
+export async function assertChannel(organizationId, channelId) {
   const result = await pool.query(
     'SELECT id, name FROM chat_channels WHERE id = $1 AND organization_id = $2',
     [channelId, organizationId],
@@ -73,7 +110,13 @@ router.delete('/channels/:id', requireRole(...MANAGERS), route(async (request, r
   z.uuid().parse(request.params.id)
   const channel = await assertChannel(request.auth.organizationId, request.params.id)
   if (channel.name === 'general') return response.status(400).json({ error: 'The #general channel cannot be deleted.' })
-  await pool.query('DELETE FROM chat_channels WHERE id = $1', [channel.id])
+  // Its shared documents go with it, so they stop counting against storage.
+  const removed = await withTransaction(async (client) => {
+    const attachments = await client.query('DELETE FROM chat_attachments WHERE organization_id = $1 AND channel_id = $2 RETURNING storage_key', [request.auth.organizationId, channel.id])
+    await client.query('DELETE FROM chat_channels WHERE id = $1', [channel.id])
+    return attachments.rows.map((row) => row.storage_key)
+  })
+  await deleteObjects(removed)
   await logActivity(pool, request.auth, 'deleted channel', 'channel', `#${channel.name}`)
   return response.status(204).end()
 }))
@@ -81,17 +124,19 @@ router.delete('/channels/:id', requireRole(...MANAGERS), route(async (request, r
 router.get('/channels/:id/messages', route(async (request, response) => {
   z.uuid().parse(request.params.id)
   await assertChannel(request.auth.organizationId, request.params.id)
+  const historyDays = (await featuresFor(pool, request.auth.organizationId)).chatHistoryDays
   const result = await pool.query(
     `SELECT * FROM (
        SELECT m.id, m.body, m.created_at AS "createdAt", m.user_id AS "userId", u.full_name AS "userName", ${attachmentJson}
        FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id
        LEFT JOIN chat_attachments a ON a.message_id = m.id AND a.channel_id = m.channel_id
-       WHERE m.channel_id = $1
+       WHERE m.channel_id = $1 ${historyFilter}
        ORDER BY m.created_at DESC LIMIT 200
      ) recent ORDER BY "createdAt" ASC`,
-    [request.params.id],
+    [request.params.id, historyDays],
   )
-  return response.json({ messages: result.rows })
+  const older = historyDays ? await pool.query(`SELECT 1 FROM chat_messages m WHERE m.channel_id = $1 AND NOT (true ${historyFilter}) LIMIT 1`, [request.params.id, historyDays]) : null
+  return response.json({ messages: result.rows, historyDays, olderHidden: Boolean(older?.rowCount) })
 }))
 
 router.post('/channels/:id/messages', route(async (request, response) => {
@@ -113,17 +158,7 @@ router.post('/channels/:id/attachments', rawUpload, route(async (request, respon
   await assertChannel(request.auth.organizationId, request.params.id)
   const message = await withTransaction(async (client) => {
     await assertStorage(client, request.auth.organizationId, upload.data.length)
-    const inserted = await client.query(
-      `INSERT INTO chat_messages (organization_id, channel_id, user_id, body)
-       VALUES ($1, $2, $3, $4) RETURNING id, body, created_at AS "createdAt", user_id AS "userId"`,
-      [request.auth.organizationId, request.params.id, request.auth.userId, upload.caption || `Shared ${upload.name}`],
-    )
-    const attachment = await client.query(
-      `INSERT INTO chat_attachments (organization_id, channel_id, message_id, name, mime_type, size_bytes, data, uploaded_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, name, mime_type AS "mimeType", size_bytes::float AS "sizeBytes"`,
-      [request.auth.organizationId, request.params.id, inserted.rows[0].id, upload.name, upload.mimeType, upload.data.length, upload.data, request.auth.userId],
-    )
-    return { ...inserted.rows[0], userName: request.auth.fullName, attachment: attachment.rows[0] }
+    return addChannelAttachment(client, request.auth, request.params.id, { ...upload, size: upload.data.length })
   })
   return response.status(201).json({ message })
 }))
@@ -148,7 +183,7 @@ function participantColumn(conversation, userId) {
   return null
 }
 
-async function findConversation(request) {
+export async function findConversation(request) {
   z.uuid().parse(request.params.id)
   const result = await pool.query(
     'SELECT id, user_a, user_b FROM direct_conversations WHERE id = $1 AND organization_id = $2',
@@ -205,22 +240,24 @@ router.post('/dms', route(async (request, response) => {
 
 router.get('/dms/:id/messages', route(async (request, response) => {
   const conversation = await findConversation(request)
+  const historyDays = (await featuresFor(pool, request.auth.organizationId)).chatHistoryDays
   const result = await pool.query(
     `SELECT * FROM (
        SELECT m.id, m.body, m.created_at AS "createdAt", m.sender_id AS "userId", u.full_name AS "userName", ${attachmentJson}
        FROM direct_messages m LEFT JOIN users u ON u.id = m.sender_id
        LEFT JOIN chat_attachments a ON a.message_id = m.id AND a.conversation_id = m.conversation_id
-       WHERE m.conversation_id = $1
+       WHERE m.conversation_id = $1 ${historyFilter}
        ORDER BY m.created_at DESC LIMIT 200
      ) recent ORDER BY "createdAt" ASC`,
-    [conversation.id],
+    [conversation.id, historyDays],
   )
+  const older = historyDays ? await pool.query(`SELECT 1 FROM direct_messages m WHERE m.conversation_id = $1 AND NOT (true ${historyFilter}) LIMIT 1`, [conversation.id, historyDays]) : null
   // Opening a conversation marks it read for this participant.
   await pool.query(
     `UPDATE direct_conversations SET ${participantColumn(conversation, request.auth.userId)} = now() WHERE id = $1`,
     [conversation.id],
   )
-  return response.json({ messages: result.rows })
+  return response.json({ messages: result.rows, historyDays, olderHidden: Boolean(older?.rowCount) })
 }))
 
 router.post('/dms/:id/messages', route(async (request, response) => {
@@ -250,21 +287,7 @@ router.post('/dms/:id/attachments', rawUpload, route(async (request, response) =
   const conversation = await findConversation(request)
   const message = await withTransaction(async (client) => {
     await assertStorage(client, request.auth.organizationId, upload.data.length)
-    const inserted = await client.query(
-      `INSERT INTO direct_messages (conversation_id, sender_id, body) VALUES ($1, $2, $3)
-       RETURNING id, body, created_at AS "createdAt", sender_id AS "userId"`,
-      [conversation.id, request.auth.userId, upload.caption || `Shared ${upload.name}`],
-    )
-    const attachment = await client.query(
-      `INSERT INTO chat_attachments (organization_id, conversation_id, message_id, name, mime_type, size_bytes, data, uploaded_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, name, mime_type AS "mimeType", size_bytes::float AS "sizeBytes"`,
-      [request.auth.organizationId, conversation.id, inserted.rows[0].id, upload.name, upload.mimeType, upload.data.length, upload.data, request.auth.userId],
-    )
-    await client.query(
-      `UPDATE direct_conversations SET last_message_at = $2, ${participantColumn(conversation, request.auth.userId)} = $2 WHERE id = $1`,
-      [conversation.id, inserted.rows[0].createdAt],
-    )
-    return { ...inserted.rows[0], userName: request.auth.fullName, attachment: attachment.rows[0] }
+    return addDirectAttachment(client, request.auth, conversation, { ...upload, size: upload.data.length })
   })
   return response.status(201).json({ message })
 }))
@@ -283,13 +306,14 @@ router.get('/dms/:id/attachments', route(async (request, response) => {
 router.get('/chat/attachments/:id/download', route(async (request, response) => {
   z.uuid().parse(request.params.id)
   const result = await pool.query(
-    `SELECT a.name, a.data, a.channel_id, c.user_a, c.user_b
+    `SELECT a.name, a.data, a.storage_key, a.channel_id, c.user_a, c.user_b
      FROM chat_attachments a LEFT JOIN direct_conversations c ON c.id = a.conversation_id
      WHERE a.id = $1 AND a.organization_id = $2`,
     [request.params.id, request.auth.organizationId],
   )
   const file = result.rows[0]
   if (!file || (!file.channel_id && ![file.user_a, file.user_b].includes(request.auth.userId))) throw new HttpError(404, 'File not found.')
+  if (file.storage_key) return response.redirect(302, await downloadUrl(file.storage_key, file.name))
   response.set({
     'Content-Type': 'application/octet-stream',
     'Content-Length': file.data.length,

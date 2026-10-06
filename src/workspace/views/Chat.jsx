@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import Icon from '../../components/Icon.jsx'
 import { Avatar, Button, Field, IconButton, Modal } from '../../components/ui.jsx'
-import { api } from '../../lib/api.js'
+import { api, directUpload } from '../../lib/api.js'
 import { formatBytes, formatTime } from '../../lib/format.js'
 import { downloadZip } from '../../lib/zip.js'
 import { useWorkspace } from '../context.js'
@@ -81,7 +81,8 @@ function NewMessage({ members, me, onClose, onPick }) {
 }
 
 function Chat() {
-  const { account, isManager, toast, confirm, data, reload, params } = useWorkspace()
+  const { account, isManager, toast, confirm, data, reload, params, openPayment, role } = useWorkspace()
+  const [history, setHistory] = useState(null)
   const me = account.user.id
   const [channels, setChannels] = useState([])
   const [conversations, setConversations] = useState([])
@@ -138,6 +139,7 @@ function Chat() {
 
   const loadMessages = useCallback(async (path) => {
     const result = await api(`${path}/messages`)
+    setHistory(result.olderHidden ? result.historyDays : null)
     setMessages((current) => {
       const same = current.length === result.messages.length && current.at(-1)?.id === result.messages.at(-1)?.id
       return same ? current : result.messages
@@ -185,22 +187,29 @@ function Chat() {
   async function attach(fileList) {
     const file = fileList?.[0]
     if (!file || !base) return
-    if (file.size > 4 * 1024 * 1024) { toast(`${file.name} is larger than 4 MB.`, 'error'); return }
     setAttaching(`Sending ${file.name}…`)
     try {
-      const response = await fetch(`${base}/attachments`, {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: {
-          'Content-Type': 'application/octet-stream',
-          'X-File-Name': encodeURIComponent(file.name),
-          'X-File-Type': file.type || 'application/octet-stream',
-          'X-Caption': encodeURIComponent(draft.trim()),
-        },
-        body: file,
+      // Large files go straight to cloud storage when it's set up; otherwise through the API (up to 4 MB).
+      let result = await directUpload(file, { target: active.kind, targetId: active.id }, {
+        caption: draft.trim(),
+        onProgress: (percent) => setAttaching(`Sending ${file.name}… ${percent}%`),
       })
-      const result = await response.json().catch(() => ({}))
-      if (!response.ok) throw new Error(result.error || 'The file couldn’t be sent.')
+      if (!result) {
+        if (file.size > 4 * 1024 * 1024) throw new Error(`${file.name} is larger than 4 MB.`)
+        const response = await fetch(`${base}/attachments`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'X-File-Name': encodeURIComponent(file.name),
+            'X-File-Type': file.type || 'application/octet-stream',
+            'X-Caption': encodeURIComponent(draft.trim()),
+          },
+          body: file,
+        })
+        result = await response.json().catch(() => ({}))
+        if (!response.ok) throw new Error(result.error || 'The file couldn’t be sent.')
+      }
       stickToBottom.current = true
       setMessages((current) => [...current, result.message])
       setDraft('')
@@ -325,6 +334,12 @@ function Chat() {
               <p>{conversation ? 'Messages here are private between the two of you.' : 'Say hello to your team.'}</p>
             </div>
           )}
+          {history && (
+            <p className="chat-history-note">
+              <Icon name="clock" size={14} />Messages older than {history} days are hidden on the Free plan.
+              {['owner', 'admin'].includes(role) && <button type="button" className="text-link" onClick={openPayment}>Upgrade to see all</button>}
+            </p>
+          )}
           {rows.map(({ message, day, newDay, grouped }) => {
             const mine = message.userId === me
             return (
@@ -353,7 +368,7 @@ function Chat() {
         ) : (
           <form className="composer" onSubmit={send}>
             <input ref={fileInput} type="file" hidden onChange={(event) => attach(event.target.files)} />
-            <button type="button" className="btn btn-icon composer-attach" onClick={() => fileInput.current?.click()} disabled={!active || Boolean(attaching)} aria-label="Attach a document" title="Attach a document (up to 4 MB)">
+            <button type="button" className="btn btn-icon composer-attach" onClick={() => fileInput.current?.click()} disabled={!active || Boolean(attaching)} aria-label="Attach a document" title="Attach a document">
               {attaching ? <span className="spinner" /> : <Icon name="upload" size={17} />}
             </button>
             <textarea

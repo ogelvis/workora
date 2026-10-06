@@ -3,6 +3,7 @@ import './LandingPage.css'
 import { BrandMark } from './components/ui.jsx'
 import Icon from './components/Icon.jsx'
 import { formatBytes, formatPrice } from './lib/format.js'
+import { planPeople } from './lib/plans.js'
 import { INDUSTRIES, SHEET_TEMPLATES } from '../shared/industries.js'
 
 const previewTabs = [
@@ -152,14 +153,14 @@ function LandingPage({ onGetStarted, onLogin }) {
     return (
       <div className="lp-plan-price">
         {plan.monthlyPrice !== null ? <><strong>{formatPrice(plan.monthlyPrice, plan.currency)}</strong><span>/ month</span></> : <strong>Custom</strong>}
-        {plan.yearlyPrice !== null && <small>or {formatPrice(plan.yearlyPrice, plan.currency)} billed yearly</small>}
+        {plan.yearlyPrice > 0 && <small>or {formatPrice(plan.yearlyPrice, plan.currency)} billed yearly</small>}
       </div>
     )
   }
 
   function limits(name, fallbackMembers, fallbackStorage) {
     const plan = plans[name]
-    const members = !plan ? fallbackMembers : plan.userLimit >= 2147483647 ? 'Unlimited members' : `Workspace for up to ${plan.userLimit} members`
+    const members = !plan ? fallbackMembers : planPeople(plan)
     const storage = plan ? `${formatBytes(plan.storageLimitBytes)} storage` : fallbackStorage
     return <><div className="lp-plan-feature"><span>✓</span> {members}</div><div className="lp-plan-feature"><span>✓</span> {storage}</div></>
   }
@@ -290,11 +291,12 @@ function LandingPage({ onGetStarted, onLogin }) {
       <section className="lp-pricing-section" id="pricing">
         <div className="lp-pricing-heading lp-reveal"><div className="lp-section-label"><span>07</span> ROOM TO GROW</div><h2>A workspace that grows<br />with <em>your business.</em></h2><p>Start with a private business workspace, then choose a plan that fits your team as you grow.</p></div>
         <div className="lp-plan-grid">
+          {plans.Free && <article className="lp-plan lp-reveal"><span className="lp-plan-label">TRY IT OUT</span><h3>Free</h3><p>For very small teams getting organised.</p>{price('Free')}{limits('Free', '3 people included', '500 MB storage')}<div className="lp-plan-feature"><span>✓</span> Sheets, tasks, chat and files</div><button type="button" onClick={onGetStarted}>Start free <span>↗</span></button></article>}
           <article className="lp-plan lp-reveal"><span className="lp-plan-label">A PLACE TO START</span><h3>Starter</h3><p>For small teams bringing their work together.</p>{price('Starter')}{limits('Starter', 'Workspace for up to 5 members', 'Up to 5 GB storage')}<div className="lp-plan-feature"><span>✓</span> Core projects and file organization</div><button type="button" onClick={onGetStarted}>Explore Starter <span>↗</span></button></article>
           <article className="lp-plan lp-plan-featured lp-reveal"><span className="lp-plan-label">FOR TEAMS IN MOTION</span><h3>Business</h3><p>More room and capabilities for growing teams.</p>{price('Business')}{limits('Business', 'Workspace for up to 25 members', 'Up to 50 GB storage')}<div className="lp-plan-feature"><span>✓</span> CRM, campaigns and Document Vault</div><button type="button" onClick={onGetStarted}>Explore Business <span>↗</span></button></article>
           <article className="lp-plan lp-reveal"><span className="lp-plan-label">BUILT AROUND YOU</span><h3>Enterprise</h3><p>Room for larger teams and advanced needs.</p>{price('Enterprise')}<div className="lp-plan-feature"><span>✓</span> Expanded team and storage limits</div><div className="lp-plan-feature"><span>✓</span> Advanced administration</div><div className="lp-plan-feature"><span>✓</span> Tailored workspace requirements</div><button type="button" onClick={onGetStarted}>Talk to our team <span>↗</span></button></article>
         </div>
-        <p className="lp-pricing-footnote">Every workspace starts with a free 14-day Starter trial. No card needed to sign up; paid plans are invoiced and paid by bank transfer.</p>
+        <p className="lp-pricing-footnote">{plans.Free ? 'Every workspace starts with a free 14-day Business trial, then stays on Free until you upgrade. No card needed. Pay per extra person as your team grows; yearly billing gets 2 months free.' : 'Every workspace starts with a free 14-day Starter trial. No card needed to sign up.'}</p>
       </section>
 
       <section className="lp-cta-section lp-reveal">
