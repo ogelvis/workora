@@ -507,9 +507,10 @@ router.get('/confirm-email', authLimiter, route(async (request, response) => {
 
 async function findInvitation(db, token) {
   const result = await db.query(
-    `SELECT i.id, i.email, i.role, i.organization_id, i.invited_by, o.name AS organization_name
+    `SELECT i.id, i.email, i.role, i.organization_id, i.invited_by, o.name AS organization_name, inviter.full_name AS inviter_name
      FROM invitations i
      JOIN organizations o ON o.id = i.organization_id
+     LEFT JOIN users inviter ON inviter.id = i.invited_by
      WHERE i.token_hash = $1 AND i.accepted_at IS NULL AND i.expires_at > now()`,
     [hashToken(token)],
   )
@@ -523,6 +524,7 @@ router.get('/invitations/:token', authLimiter, route(async (request, response) =
     email: invitation.email,
     role: invitation.role,
     organizationName: invitation.organization_name,
+    invitedBy: invitation.inviter_name || null,
   })
 }))
 

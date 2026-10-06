@@ -108,3 +108,6 @@
 .auth-help p .icon { color: var(--brand); flex-shrink: 0; margin-top: 3px; }
 .auth-help button { background: none; border: 0; color: var(--brand); cursor: pointer; font: inherit; font-weight: 700; padding: 0; }
 .auth-help button:hover { text-decoration: underline; text-underline-offset: 3px; }
+.auth-invite { align-items: flex-start; background: var(--brand-soft); border-radius: 14px; display: flex; gap: 12px; margin: 4px 0 18px; padding: 14px; }
+.auth-invite p { color: var(--ink); font-size: 0.9rem; line-height: 1.55; margin: 0; }
+.auth-invite-icon { align-items: center; background: #fff; border-radius: 10px; color: var(--brand); display: inline-flex; flex-shrink: 0; height: 36px; justify-content: center; width: 36px; }

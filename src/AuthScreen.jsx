@@ -151,7 +151,10 @@ function AuthScreen({ mode, setMode, token, onAuthenticated, onBack, initialNoti
           <h1>{text.title}</h1>
 
           {mode === 'invite' && tokenInfo && (
-            <p className="auth-lede">Join <strong>{tokenInfo.organizationName}</strong> as {tokenInfo.role === 'admin' ? 'an' : 'a'} <strong>{capitalize(tokenInfo.role)}</strong>.</p>
+            <div className="auth-invite">
+              <span className="auth-invite-icon"><Icon name="team" size={18} /></span>
+              <p>{tokenInfo.invitedBy ? <><strong>{tokenInfo.invitedBy}</strong> invited you to join</> : 'You’re invited to join'} <strong>{tokenInfo.organizationName}</strong> as {tokenInfo.role === 'admin' ? 'an admin' : tokenInfo.role === 'manager' ? 'a manager' : 'a team member'}. Just add your name and choose a password.</p>
+            </div>
           )}
           {mode === 'reset' && tokenInfo && <p className="auth-lede">Resetting the password for <strong>{tokenInfo.email}</strong>.</p>}
           {mode === 'register' && <p className="auth-lede">{step === 1 ? 'Step 1 of 2 · What kind of business are you? OVO shapes your workspace around it.' : 'Step 2 of 2 · Your 14-day trial starts today. No card required.'}</p>}

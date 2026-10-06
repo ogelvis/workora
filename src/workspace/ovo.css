@@ -664,3 +664,7 @@ button.chip { border: 0; }
 .gs-check { align-items: center; background: var(--brand-soft); border-radius: 50%; color: var(--brand); display: inline-flex; flex-shrink: 0; height: 32px; justify-content: center; width: 32px; }
 .gs-steps li.done .gs-check { background: var(--success); color: #fff; }
 @media (max-width: 760px) { .gs-steps { grid-template-columns: minmax(0, 1fr); } }
+/* Sidebar footer: full name on its own line, a full-width Log out under it. */
+.ws-user { flex-wrap: wrap; }
+.ws-user .ws-logout { justify-content: center; margin-top: 4px; width: 100%; }
+.ws-invite { margin-top: 8px; }
