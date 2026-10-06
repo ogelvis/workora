@@ -484,7 +484,9 @@ const ledgerSchema = z.object({
 
 const transactions = `
   SELECT p.id, 'inflow' AS kind, p.amount_minor::float / 100 AS amount, p.currency, 'Subscriptions' AS category,
-         p.plan_name || ' plan · ' || p.billing_interval || ' (Paystack)' AS description,
+         p.plan_name || ' plan · ' || CASE WHEN p.purpose = 'seats' THEN 'extra people'
+           ELSE CASE p.billing_interval WHEN 'quarterly' THEN '3 months' WHEN 'biannual' THEN '6 months' WHEN 'yearly' THEN '1 year' ELSE '1 month' END END
+           || ' (Paystack)' AS description,
          (p.paid_at AT TIME ZONE 'UTC')::date AS "occurredOn", o.name AS organization, 'paystack' AS source, p.paid_at AS "createdAt"
   FROM payments p LEFT JOIN organizations o ON o.id = p.organization_id WHERE p.status = 'success'
   UNION ALL
@@ -519,9 +521,9 @@ router.get('/revenue', route(async (_request, response) => {
     pool.query(`SELECT * FROM (${transactions}) t ORDER BY "occurredOn" DESC, "createdAt" DESC LIMIT 200`),
     // Monthly recurring revenue: each workspace's latest paid period that is still running, as a monthly amount.
     pool.query(
-      `SELECT COALESCE(sum(CASE WHEN billing_interval = 'yearly' THEN amount_minor::float / 1200 ELSE amount_minor::float / 100 END), 0)::float AS mrr,
+      `SELECT COALESCE(sum(amount_minor::float / 100 / CASE billing_interval WHEN 'yearly' THEN 12 WHEN 'biannual' THEN 6 WHEN 'quarterly' THEN 3 ELSE 1 END), 0)::float AS mrr,
               count(*)::int AS paying
-       FROM (SELECT DISTINCT ON (organization_id) * FROM payments WHERE status = 'success' ORDER BY organization_id, paid_at DESC) latest
+       FROM (SELECT DISTINCT ON (organization_id) * FROM payments WHERE status = 'success' AND purpose = 'plan' ORDER BY organization_id, paid_at DESC) latest
        WHERE period_end > now()`,
     ),
     pool.query(

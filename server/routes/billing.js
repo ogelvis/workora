@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { pool } from '../db.js'
 import { requireAuth, requireRole } from '../auth.js'
 import { HttpError, appUrl, getSubscription, logActivity, notify, route, withTransaction } from '../lib.js'
+import { BILLING_PERIOD_VALUES, billingPeriod, planAmount } from '../../shared/billing.js'
 
 // Paystack checkout: the workspace pays on Paystack's page, and OVO activates the plan
 // only after confirming the payment with Paystack itself (callback, plus webhook as a backup).
@@ -65,7 +66,7 @@ export async function confirmPayment(reference) {
       return { status: 'success', payment: { ...payment, period_end: periodEnd } }
     }
     // A renewal adds time after the current paid period; an upgrade or lapsed plan starts today.
-    const step = payment.billing_interval === 'yearly' ? '1 year' : '1 month'
+    const step = `${billingPeriod(payment.billing_interval).months} months`
     const updated = await client.query(
       `UPDATE subscriptions SET
          current_period_end = CASE WHEN plan_id = $2 AND status = 'active' AND current_period_end > now()
@@ -133,17 +134,9 @@ const router = express.Router()
 router.use(requireAuth)
 const adminsOnly = requireRole('owner', 'admin')
 
-// The price of a plan for a number of people: the base price covers the plan's included people,
-// each extra person costs extra_user_price a month (yearly is 10 months, so 2 are free).
-export function planAmount(plan, interval, seats) {
-  const base = interval === 'yearly' ? plan.yearly : plan.monthly
-  const extra = Math.max(0, seats - plan.included) * (plan.extraUserPrice || 0) * (interval === 'yearly' ? 10 : 1)
-  return base + extra
-}
-
 const planRow = async (name) => (await pool.query(
-  `SELECT name, monthly_price::float AS monthly, yearly_price::float AS yearly, currency, user_limit AS "userLimit",
-          COALESCE(included_users, user_limit) AS included, extra_user_price::float AS "extraUserPrice"
+  `SELECT name, monthly_price::float AS "monthlyPrice", yearly_price::float AS "yearlyPrice", currency, user_limit AS "userLimit",
+          COALESCE(included_users, user_limit) AS "includedUsers", extra_user_price::float AS "extraUserPrice"
    FROM subscription_plans WHERE name = $1 AND active`,
   [name],
 )).rows[0]
@@ -165,7 +158,7 @@ async function startCheckout(request, { plan, interval, seats, purpose, amount }
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
     [request.auth.organizationId, reference, plan.name, interval, amountMinor, plan.currency, request.auth.userId, seats, purpose],
   )
-  const label = purpose === 'seats' ? `${plan.name} — room for ${seats} people` : `${plan.name} (${interval}, ${seats} people)`
+  const label = purpose === 'seats' ? `${plan.name} — room for ${seats} people` : `${plan.name} (${billingPeriod(interval).label}, ${seats} people)`
   const data = await paystack('/transaction/initialize', {
     method: 'POST',
     body: JSON.stringify({
@@ -195,17 +188,16 @@ router.post('/billing/checkout', adminsOnly, route(async (request, response) => 
   if (!paystackEnabled()) throw new HttpError(400, 'Online payment isn’t set up yet. Contact OVO to upgrade.')
   const values = z.object({
     plan: z.string().trim().min(1).max(60),
-    interval: z.enum(['monthly', 'yearly']),
+    interval: z.enum(BILLING_PERIOD_VALUES),
     seats: z.number().int().min(1).max(100000).optional(),
   }).parse(request.body)
   const plan = await planRow(values.plan)
   if (!plan) throw new HttpError(404, 'That plan isn’t available.')
-  const price = values.interval === 'yearly' ? plan.yearly : plan.monthly
   if (plan.name === 'Free') throw new HttpError(400, 'The Free plan doesn’t need payment. Workspaces move to it automatically when a paid plan ends.')
-  if (!price) throw new HttpError(400, `The ${plan.name} plan has custom pricing. Contact OVO to arrange it.`)
+  if (!plan.monthlyPrice) throw new HttpError(400, `The ${plan.name} plan has custom pricing. Contact OVO to arrange it.`)
   const people = await headcount(request.auth.organizationId)
   // Without extra-person pricing, the plan is a fixed size.
-  const seats = plan.extraUserPrice ? Math.max(plan.included, values.seats ?? people) : plan.included
+  const seats = plan.extraUserPrice ? Math.max(plan.includedUsers, values.seats ?? people) : plan.includedUsers
   if (seats > plan.userLimit) throw new HttpError(400, `The ${plan.name} plan goes up to ${plan.userLimit} people. Contact OVO for more.`)
   if (seats < people) throw new HttpError(400, `You have ${people} people (including pending invitations). Choose room for at least ${people}, or remove some first.`)
   return response.json(await startCheckout(request, { plan, interval: values.interval, seats, purpose: 'plan', amount: planAmount(plan, values.interval, seats) }))

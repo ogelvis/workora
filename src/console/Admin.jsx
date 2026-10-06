@@ -694,7 +694,7 @@ function PlanCard({ plan, onSaved }) {
       </div>
       <fieldset className="form-grid" disabled={busy}>
         <Field label="Monthly price" hint="Leave empty for “Contact us”"><input name="monthlyPrice" type="number" min="0" step="1" defaultValue={plan.monthlyPrice ?? ''} /></Field>
-        <Field label="Yearly price"><input name="yearlyPrice" type="number" min="0" step="1" defaultValue={plan.yearlyPrice ?? ''} /></Field>
+        <Field label="Yearly price" hint="3 and 6 months: 5% and 10% off monthly, worked out automatically"><input name="yearlyPrice" type="number" min="0" step="1" defaultValue={plan.yearlyPrice ?? ''} /></Field>
         <Field label="Currency"><input name="currency" maxLength={3} defaultValue={plan.currency} /></Field>
         <Field label="Storage (GB)"><input name="storageLimitGb" type="number" min="0.1" step="0.1" defaultValue={Math.round((plan.storageLimitBytes / 1024 ** 3) * 10) / 10} /></Field>
         <Field label="People included" hint="Covered by the plan price"><input name="includedUsers" type="number" min="1" required defaultValue={plan.includedUsers ?? plan.userLimit} /></Field>
