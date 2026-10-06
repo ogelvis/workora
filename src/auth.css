@@ -97,3 +97,14 @@
 .auth-terms { align-items: flex-start; color: var(--muted); cursor: pointer; display: flex; font-size: 0.84rem; gap: 10px; line-height: 1.5; }
 .auth-terms input { accent-color: var(--brand); flex-shrink: 0; height: 17px; margin-top: 2px; width: 17px; }
 .auth-terms a { color: var(--brand); font-weight: 650; text-decoration: underline; text-underline-offset: 2px; }
+
+.password-wrap { display: block; position: relative; }
+.password-wrap input { padding-right: 44px; width: 100%; }
+.password-eye { align-items: center; background: none; border: 0; border-radius: 8px; color: var(--muted); display: inline-flex; height: 34px; justify-content: center; position: absolute; right: 5px; top: 50%; transform: translateY(-50%); width: 34px; }
+.password-eye:hover, .password-eye[aria-pressed="true"] { background: var(--soft); color: var(--brand); }
+.auth-link.center { align-self: center; margin-top: 4px; }
+.auth-help { border-top: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 8px; margin-top: 18px; padding-top: 16px; }
+.auth-help p { align-items: flex-start; color: var(--muted); display: flex; font-size: 0.82rem; gap: 8px; line-height: 1.5; margin: 0; }
+.auth-help p .icon { color: var(--brand); flex-shrink: 0; margin-top: 3px; }
+.auth-help button { background: none; border: 0; color: var(--brand); cursor: pointer; font: inherit; font-weight: 700; padding: 0; }
+.auth-help button:hover { text-decoration: underline; text-underline-offset: 3px; }

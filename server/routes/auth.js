@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { pool } from '../db.js'
 import { adminPath, createSession, destroySession, hashToken, isPlatformAdmin, platformAdminEmails, requireAuth } from '../auth.js'
 import { seedIndustry } from './sheets.js'
-import { emailChangedEmail, emailConfigured, ownerResetEmail, sendMail, verifyEmailChangeEmail } from '../mail.js'
+import { emailChangedEmail, emailConfigured, ownerResetEmail, passwordResetEmail, sendMail, verifyEmailChangeEmail } from '../mail.js'
 import { findIndustry } from '../../shared/industries.js'
 import { TERMS_VERSION } from '../../shared/legal.js'
 import {
@@ -602,6 +602,30 @@ async function findReset(db, token) {
   )
   return result.rows[0]
 }
+
+// What the sign-in screen can offer (e.g. emailed password resets).
+router.get('/options', (_request, response) => response.json({ emailEnabled: emailConfigured() }))
+
+// Self-service password reset by email. Always answers the same way so it can't reveal who has an account.
+router.post('/forgot', authLimiter, route(async (request, response) => {
+  const { email } = z.object({ email: emailSchema }).parse(request.body)
+  if (!emailConfigured()) throw new HttpError(400, 'Password reset emails aren’t available yet. Ask your workspace owner or admin for a reset link.')
+  const user = await pool.query(
+    `SELECT u.id, u.full_name FROM users u
+     WHERE lower(u.email) = $1 AND EXISTS (SELECT 1 FROM organization_members om WHERE om.user_id = u.id)`,
+    [email.toLowerCase()],
+  )
+  if (user.rowCount) {
+    const { token, tokenHash } = createToken()
+    await pool.query(
+      'INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval \'1 hour\')',
+      [user.rows[0].id, tokenHash],
+    )
+    const sent = await sendMail({ to: email.toLowerCase(), ...passwordResetEmail({ fullName: user.rows[0].full_name, link: appUrl(request, `/?reset=${token}`) }) })
+    if (!sent.sent) console.warn('Password reset email not sent:', sent.reason)
+  }
+  return response.json({ ok: true })
+}))
 
 router.get('/password-resets/:token', authLimiter, route(async (request, response) => {
   const reset = await findReset(pool, request.params.token)

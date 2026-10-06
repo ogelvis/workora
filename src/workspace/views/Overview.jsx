@@ -6,7 +6,7 @@ import { api } from '../../lib/api.js'
 import { dueLabel, formatBytes, formatDateTime, greeting, timeAgo } from '../../lib/format.js'
 import { industryFor, itemName } from '../../../shared/industries.js'
 import { useWorkspace } from '../context.js'
-import { PlanCard } from '../Pay.jsx'
+import { GettingStarted, PlanCard } from '../Pay.jsx'
 import { SheetIcon } from './Sheets.jsx'
 
 const WIDGETS = {
@@ -216,6 +216,7 @@ function Overview() {
         </div>
       </section>
 
+      {isAdmin && <GettingStarted />}
       {isAdmin && <PlanCard onPay={openPayment} />}
 
       <section className="home-tiles" aria-label="Today's overview">

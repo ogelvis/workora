@@ -1,5 +1,6 @@
 import express from 'express'
 import { paystackEnabled } from './billing.js'
+import { emailConfigured, inviteEmail, sendMail } from '../mail.js'
 import { z } from 'zod'
 import { pool } from '../db.js'
 import { requireAuth, requireRole } from '../auth.js'
@@ -168,9 +169,15 @@ router.post('/invitations', adminsOnly, route(async (request, response) => {
     await logActivity(client, request.auth, `invited a new ${role}`, 'invitation', email)
     return result.rows[0]
   })
+  const link = appUrl(request, `/?invite=${token}`)
+  // With email set up, OVO sends the invitation itself; the link is still returned to share another way.
+  const sent = emailConfigured()
+    ? await sendMail({ to: email, ...inviteEmail({ inviterName: request.auth.fullName, organizationName: request.auth.organizationName, role, link, expiresAt }) })
+    : { sent: false }
   return response.status(201).json({
     invitation: { ...invitation, invitedBy: request.auth.fullName },
-    link: appUrl(request, `/?invite=${token}`),
+    link,
+    emailed: sent.sent,
   })
 }))
 

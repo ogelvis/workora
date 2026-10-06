@@ -76,39 +76,8 @@ function Profile() {
   )
 }
 
-function InviteForm({ role, onInvited }) {
-  const { toast } = useWorkspace()
-  const [busy, setBusy] = useState(false)
-  async function submit(event) {
-    event.preventDefault()
-    const form = event.currentTarget
-    setBusy(true)
-    try {
-      const values = Object.fromEntries(new FormData(form).entries())
-      const result = await api('/api/invitations', { method: 'POST', body: values })
-      form.reset()
-      onInvited(result)
-    } catch (error) {
-      toast(error.message, 'error')
-    } finally {
-      setBusy(false)
-    }
-  }
-  return (
-    <form className="invite-form" onSubmit={submit}>
-      <input name="email" type="email" required placeholder="name@company.com" aria-label="Email address" />
-      <select name="role" defaultValue="staff" aria-label="Role">
-        {role === 'owner' && <option value="admin">Admin</option>}
-        <option value="manager">Manager</option>
-        <option value="staff">Staff</option>
-      </select>
-      <button type="submit" className="btn btn-primary" disabled={busy}><Icon name="plus" size={16} />{busy ? 'Inviting…' : 'Invite'}</button>
-    </form>
-  )
-}
-
 function Team() {
-  const { account, role, isAdmin, reload, data, confirm, toast, navigate } = useWorkspace()
+  const { account, role, isAdmin, reload, data, confirm, toast, navigate, openInvite } = useWorkspace()
   const [invitations, setInvitations] = useState([])
   const [link, setLink] = useState(null)
 
@@ -120,7 +89,11 @@ function Team() {
 
   useEffect(() => {
     loadInvites().catch((error) => toast(error.message, 'error'))
-  }, [loadInvites, toast])
+    // The invite window can be opened from anywhere; refresh the pending list when it sends.
+    const refresh = () => { loadInvites().catch(() => {}); reload(['members']) }
+    window.addEventListener('ovo:invited', refresh)
+    return () => window.removeEventListener('ovo:invited', refresh)
+  }, [loadInvites, toast, reload])
 
   const canManage = (target) => target.role !== 'owner' && target.id !== account.user.id && (role === 'owner' || (role === 'admin' && ['manager', 'staff'].includes(target.role)))
   const assignable = role === 'owner' ? ['admin', 'manager', 'staff'] : ['manager', 'staff']
@@ -178,15 +151,11 @@ function Team() {
     <div className="stack">
       {isAdmin && (
         <section className="card settings-card">
-          <div className="card-head"><div><h2>Invite your team</h2><p>We create a private invite link for you to share. It works once and expires in 7 days.</p></div></div>
-          <InviteForm role={role} onInvited={(result) => {
-            loadInvites()
-            setLink({
-              title: 'Invitation created',
-              description: `Share this link with ${result.invitation.email} so they can join as ${result.invitation.role}. Email delivery isn’t connected, so send it yourself.`,
-              link: result.link,
-            })
-          }} />
+          <div className="card-head">
+            <div><h2>Invite your team</h2><p>Add people by email. They get a link, choose a password and they’re in — links work once and expire in 7 days.</p></div>
+            <Button variant="primary" icon="plus" onClick={openInvite}>Invite people</Button>
+          </div>
+          {invitations.length > 0 && <span className="field-label invite-pending-label">Waiting to join</span>}
           {invitations.length > 0 && (
             <ul className="invite-list">
               {invitations.map((invitation) => (

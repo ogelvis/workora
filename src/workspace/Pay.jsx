@@ -105,3 +105,47 @@ export function PlanCard({ onPay }) {
     </section>
   )
 }
+
+// First steps for a new workspace, shown to owners and admins until done or dismissed.
+export function GettingStarted() {
+  const { account, data, openInvite, openPayment, navigate } = useWorkspace()
+  const key = `ovo.gettingStarted.${account.user.id}`
+  const [hidden, setHidden] = useState(() => { try { return localStorage.getItem(key) === 'done' } catch { return false } })
+  const [pendingInvites, setPendingInvites] = useState(0)
+  useEffect(() => {
+    const load = () => api('/api/invitations').then((result) => setPendingInvites(result.invitations.length)).catch(() => {})
+    load()
+    window.addEventListener('ovo:invited', load)
+    return () => window.removeEventListener('ovo:invited', load)
+  }, [])
+  const steps = [
+    { label: 'Invite your team', hint: 'Add the people you work with.', done: data.members.length > 1 || pendingInvites > 0, action: 'Invite people', run: openInvite, icon: 'team' },
+    { label: 'Add your first record', hint: 'A client, property, student or anything you track.', done: data.sheets.some((sheet) => sheet.rowCount > 0) || data.clients.length > 0, action: 'Open sheets', run: () => navigate('sheets'), icon: 'sheet' },
+    { label: 'Set your password', hint: 'So you can sign in from any device.', done: account.passwordSet !== false, action: 'Set password', run: () => navigate('settings', { tab: 'security' }), icon: 'key' },
+    { label: 'Choose a plan', hint: 'Keep growing after your free trial.', done: account.subscription?.status === 'active', action: 'See plans', run: openPayment, icon: 'billing' },
+  ]
+  const done = steps.filter((step) => step.done).length
+  if (hidden || done === steps.length) return null
+  function dismiss() {
+    try { localStorage.setItem(key, 'done') } catch { /* private mode */ }
+    setHidden(true)
+  }
+  return (
+    <section className="card getting-started" aria-label="Get started">
+      <div className="card-head">
+        <div><h2>Get started with OVO</h2><p>{done} of {steps.length} done — a few quick steps to set up {account.organization.name}.</p></div>
+        <button type="button" className="text-link" onClick={dismiss}>Hide</button>
+      </div>
+      <div className="gs-progress"><span style={{ width: `${(done / steps.length) * 100}%` }} /></div>
+      <ol className="gs-steps">
+        {steps.map((step) => (
+          <li key={step.label} className={step.done ? 'done' : ''}>
+            <span className="gs-check"><Icon name={step.done ? 'check' : step.icon} size={15} /></span>
+            <div><strong>{step.label}</strong><small>{step.hint}</small></div>
+            {!step.done && <Button size="sm" onClick={step.run}>{step.action}</Button>}
+          </li>
+        ))}
+      </ol>
+    </section>
+  )
+}
