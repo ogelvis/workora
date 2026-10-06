@@ -6,6 +6,7 @@ import { api } from '../../lib/api.js'
 import { dueLabel, formatBytes, formatDateTime, greeting, timeAgo } from '../../lib/format.js'
 import { industryFor, itemName } from '../../../shared/industries.js'
 import { useWorkspace } from '../context.js'
+import { PlanCard } from '../Pay.jsx'
 import { SheetIcon } from './Sheets.jsx'
 
 const WIDGETS = {
@@ -49,7 +50,7 @@ function Tile({ icon, tone, value, label, note, href }) {
 }
 
 function Overview() {
-  const { account, data, isManager, isAdmin, patch, openForm, loaded, navigate } = useWorkspace()
+  const { account, data, isManager, isAdmin, patch, openForm, loaded, navigate, openPayment } = useWorkspace()
   const [layout, setLayout] = useLayout(account.user.id)
   const [editing, setEditing] = useState(false)
   const [recent, setRecent] = useState(null)
@@ -203,7 +204,7 @@ function Overview() {
           <span className="home-date">{new Date(now).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</span>
           <h1>{greeting()}, {account.organization.name}</h1>
           <p>Welcome back, {account.user.fullName.split(' ')[0]}. Here’s what matters today.</p>
-          {isAdmin && trialDays !== null && <a href="#/billing" className="trial-chip">{trialDays} days left in your trial</a>}
+          {isAdmin && trialDays !== null && <button type="button" className="trial-chip" onClick={openPayment}>{trialDays} days left in your trial · Pay now</button>}
         </div>
         <div className="home-quick" aria-label="Quick actions">
           {quick.map((item) => (
@@ -214,6 +215,8 @@ function Overview() {
           ))}
         </div>
       </section>
+
+      {isAdmin && <PlanCard onPay={openPayment} />}
 
       <section className="home-tiles" aria-label="Today's overview">
         {tiles.map(({ key, ...tile }) => <Tile key={key} {...tile} />)}

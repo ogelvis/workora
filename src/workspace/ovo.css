@@ -572,3 +572,36 @@ button.chip { border: 0; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; }
 .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .table-wrap .table { min-width: 640px; }
+
+/* ------------------------------------------------------------------ Pay from the dashboard */
+.home-hero .trial-chip { cursor: pointer; }
+.ws-banner-action { background: none; border: 0; color: inherit; cursor: pointer; font-weight: 750; margin-left: auto; padding: 0; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+.plan-strip { align-items: center; background: #fff; border: 1px solid var(--line); border-radius: 16px; display: flex; gap: 14px; padding: 14px 16px; }
+.plan-strip > div { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.plan-strip strong { color: var(--ink); font-size: 0.95rem; }
+.plan-strip small { color: var(--muted); font-size: 0.82rem; }
+.plan-strip-icon { align-items: center; background: var(--brand-soft); border-radius: 12px; color: var(--brand); display: inline-flex; flex-shrink: 0; height: 40px; justify-content: center; width: 40px; }
+.plan-strip.due { border-color: color-mix(in srgb, var(--c-amber) 45%, var(--line)); }
+.plan-strip.due .plan-strip-icon { background: var(--c-amber-soft); color: var(--c-amber); }
+.plan-strip.lapsed { background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 30%, var(--line)); }
+.plan-strip.lapsed .plan-strip-icon { background: #fff; color: var(--danger); }
+.plan-strip.lapsed small { color: var(--danger); font-weight: 650; }
+.pay-period { display: flex; justify-content: center; }
+.pay-plans { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.pay-plans button { background: #fff; border: 1.5px solid var(--line); border-radius: 14px; display: flex; flex-direction: column; gap: 6px; padding: 14px; text-align: left; transition: border-color 0.15s ease, box-shadow 0.15s ease; }
+.pay-plans button.active { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+.pay-plan-top { align-items: center; display: flex; gap: 8px; justify-content: space-between; }
+.pay-plan-top strong { color: var(--ink); font-size: 0.95rem; }
+.pay-plan-top small { background: var(--soft); border-radius: 999px; color: var(--muted); font-size: 0.68rem; font-weight: 700; padding: 2px 8px; }
+.pay-plan-price { color: var(--ink); font-size: 1.25rem; font-weight: 800; letter-spacing: -0.02em; }
+.pay-plan-price em { color: var(--muted); font-size: 0.78rem; font-style: normal; font-weight: 600; margin-left: 2px; }
+.pay-plan-meta { color: var(--muted); font-size: 0.76rem; }
+.pay-summary { align-items: center; background: var(--soft); border-radius: 12px; display: flex; justify-content: space-between; padding: 12px 14px; }
+.pay-summary span { color: var(--muted); font-size: 0.86rem; font-weight: 650; }
+.pay-summary strong { color: var(--ink); font-size: 1.2rem; }
+.pay-secure { align-items: center; color: var(--muted); display: flex; font-size: 0.78rem; gap: 6px; margin: 0; }
+.pay-secure .icon { color: var(--success); flex-shrink: 0; }
+@media (max-width: 640px) {
+  .plan-strip { flex-wrap: wrap; }
+  .plan-strip .btn { justify-content: center; width: 100%; }
+}
