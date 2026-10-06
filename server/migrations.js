@@ -5,7 +5,7 @@ import { pool } from './db.js'
 
 const migrationsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'db', 'migrations')
 // Serverless bundles may omit the .sql files; fall back to the newest migration this code needs.
-export const LATEST_MIGRATION = '014_r2_storage_seats_plan_features.sql'
+export const LATEST_MIGRATION = '015_pricing_periods.sql'
 
 // Migrations this code expects that the database hasn't run yet.
 export async function pendingMigrations() {

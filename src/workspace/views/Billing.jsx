@@ -1,29 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import Icon from '../../components/Icon.jsx'
-import { Meter, PageHeader, Pill, Segmented } from '../../components/ui.jsx'
+import { Meter, PageHeader, Pill } from '../../components/ui.jsx'
 import { api } from '../../lib/api.js'
 import { capitalize, formatBytes, formatDateTime, formatPrice } from '../../lib/format.js'
 import { useWorkspace } from '../context.js'
-import { AddPeopleModal, PayModal } from '../Pay.jsx'
-import { planPeople } from '../../lib/plans.js'
-
-const planCopy = {
-  Free: { label: 'Try it out', blurb: 'For very small teams getting organised.' },
-  Starter: { label: 'A place to start', blurb: 'For small teams bringing their work together.' },
-  Business: { label: 'For teams in motion', blurb: 'More room and capabilities for growing teams.' },
-  Enterprise: { label: 'Built around you', blurb: 'Room for larger teams and advanced needs.' },
-}
-
-// What's included beyond people and storage, from the plan's feature limits.
-function featureList(features = {}) {
-  const count = (value, noun) => (value === null || value === undefined ? `Unlimited ${noun}s` : `${value} ${value === 1 ? noun : `${noun}s`}`)
-  return [
-    count(features.forms, 'form'),
-    count(features.automations, 'automation'),
-    features.reports === false ? 'Your own task updates' : 'Team daily & weekly reports',
-    features.chatHistoryDays ? `${features.chatHistoryDays}-day chat history` : 'Full chat history',
-  ]
-}
+import { AddPeopleModal, PayModal, PeriodPicker, PlanIncludes } from '../Pay.jsx'
+import { PLAN_DETAILS, billingPeriod, planAmount } from '../../lib/plans.js'
 
 function Usage({ label, value, max, format = (number) => number }) {
   // Projects use null for no limit; unlimited members are stored as the int4 maximum.
@@ -60,7 +42,7 @@ function PaymentHistory({ payments }) {
             {payments.map((payment) => (
               <tr key={payment.id}>
                 <td className="muted">{formatDateTime(payment.paidAt || payment.createdAt)}</td>
-                <td className="cell-strong">{payment.plan} · {payment.interval === 'yearly' ? 'Yearly' : 'Monthly'}</td>
+                <td className="cell-strong">{payment.plan} · {payment.purpose === 'seats' ? 'Extra people' : billingPeriod(payment.interval).label}</td>
                 <td>{formatPrice(payment.amount, payment.currency)}</td>
                 <td><Pill tone={payment.status === 'success' ? 'success' : payment.status === 'failed' ? 'danger' : 'info'}>{payment.status === 'success' ? 'Paid' : payment.status === 'failed' ? 'Failed' : 'Pending'}</Pill></td>
                 <td className="muted">{payment.periodEnd ? new Date(payment.periodEnd).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</td>
@@ -177,30 +159,27 @@ function Billing() {
       <section>
         <div className="section-title plans-head">
           <div><span className="eyebrow">Plans</span><h2>Room to grow</h2></div>
-          {billing.paymentsEnabled && <Segmented label="Billing period" value={interval} onChange={setInterval} options={[{ value: 'monthly', label: 'Monthly' }, { value: 'yearly', label: 'Yearly' }]} />}
         </div>
+        {billing.paymentsEnabled && <div className="plans-period"><span>Pay for</span><PeriodPicker value={interval} onChange={setInterval} /></div>}
         <div className="plans">
           {plans.map((plan) => {
             const current = plan.name === subscription.plan
-            const copy = planCopy[plan.name] || {}
+            const copy = PLAN_DETAILS[plan.name] || {}
+            const amount = planAmount(plan, interval, plan.includedUsers)
+            const period = billingPeriod(interval)
             return (
               <article key={plan.name} className={`plan${plan.name === 'Business' ? ' featured' : ''}${current ? ' current' : ''}`}>
                 <span className="plan-label">{copy.label}</span>
                 <h3>{plan.name}</h3>
-                <p>{copy.blurb}</p>
-                <p className="plan-price">{plan.monthlyPrice !== null ? <>{formatPrice(plan.monthlyPrice, plan.currency)} <span>/ month</span></> : 'Custom pricing'}</p>
-                {plan.yearlyPrice > 0 && <p className="plan-yearly">or {formatPrice(plan.yearlyPrice, plan.currency)} per year</p>}
-                <ul>
-                  <li><Icon name="check" size={14} />{planPeople(plan)}</li>
-                  <li><Icon name="check" size={14} />{formatBytes(plan.storageLimitBytes)} storage</li>
-                  <li><Icon name="check" size={14} />{plan.projectLimit ? `${plan.projectLimit} projects` : 'Unlimited projects'}</li>
-                  {featureList(plan.features).map((item) => <li key={item}><Icon name="check" size={14} />{item}</li>)}
-                </ul>
+                <p>{copy.tagline}</p>
+                <p className="plan-price">{plan.monthlyPrice === null ? 'Custom pricing' : plan.monthlyPrice === 0 ? <>₦0 <span>forever</span></> : <>{formatPrice(plan.monthlyPrice, plan.currency)} <span>/ month</span></>}</p>
+                {amount && period.months > 1 ? <p className="plan-yearly">{formatPrice(amount, plan.currency)} for {period.label.toLowerCase()} · {period.saving}</p> : null}
+                <PlanIncludes plan={plan} />
                 {plan.name === 'Free' ? <button type="button" disabled>{current ? 'Your current plan' : 'Automatic when a paid plan ends'}</button>
-                : billing.paymentsEnabled && (interval === 'yearly' ? plan.yearlyPrice : plan.monthlyPrice) ? (
+                : billing.paymentsEnabled && amount ? (
                   <button type="button" className="plan-pay" onClick={() => setPaying(plan.name)}>
-                    {current && subscription.status === 'active' ? `Renew · ${formatPrice(interval === 'yearly' ? plan.yearlyPrice : plan.monthlyPrice, plan.currency)}`
-                        : `${current ? 'Pay for' : subscription.status !== 'active' || (plan.monthlyPrice || 0) > (plans.find((item) => item.name === subscription.plan)?.monthlyPrice || 0) ? 'Upgrade to' : 'Switch to'} ${plan.name} · ${formatPrice(interval === 'yearly' ? plan.yearlyPrice : plan.monthlyPrice, plan.currency)}`}
+                    {current && subscription.status === 'active' ? `Renew · ${formatPrice(amount, plan.currency)}`
+                        : `${current ? 'Pay for' : subscription.status !== 'active' || subscription.plan === 'Free' || (plan.monthlyPrice || 0) > (plans.find((item) => item.name === subscription.plan)?.monthlyPrice || 0) ? 'Upgrade to' : 'Switch to'} ${plan.name} · ${formatPrice(amount, plan.currency)}`}
                   </button>
                 ) : current || !billing.supportEmail
                   ? <button type="button" disabled>{current ? 'Your current plan' : 'Contact OVO to switch'}</button>

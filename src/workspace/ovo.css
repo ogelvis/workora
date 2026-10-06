@@ -601,6 +601,23 @@ button.chip { border: 0; }
 .pay-summary strong { color: var(--ink); font-size: 1.2rem; }
 .pay-secure { align-items: center; color: var(--muted); display: flex; font-size: 0.78rem; gap: 6px; margin: 0; }
 .pay-secure .icon { color: var(--success); flex-shrink: 0; }
+.period-picker { display: grid; gap: 8px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.period-picker button { background: #fff; border: 1.5px solid var(--line); border-radius: 12px; display: grid; gap: 2px; padding: 9px 10px; text-align: center; transition: border-color 0.15s ease, box-shadow 0.15s ease; }
+.period-picker button.active { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+.period-picker strong { color: var(--ink); font-size: 0.86rem; }
+.period-picker small { color: var(--success); font-size: 0.7rem; font-weight: 700; }
+.period-picker button:first-child small { color: var(--muted); font-weight: 600; }
+.plans-period { align-items: center; display: flex; gap: 12px; margin: 0 0 14px; }
+.plans-period > span { color: var(--muted); font-size: 0.84rem; font-weight: 700; white-space: nowrap; }
+.plans-period .period-picker { flex: 1; max-width: 560px; }
+.plan-includes { display: grid; gap: 7px; list-style: none; margin: 0; padding: 0; }
+.plan-includes li { align-items: flex-start; display: flex; font-size: 0.84rem; gap: 8px; line-height: 1.4; }
+.plan-includes .icon { color: var(--success); flex-shrink: 0; margin-top: 2px; }
+.plan-includes.compact { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; }
+.plan-includes.compact li { font-size: 0.78rem; }
+.pay-includes { border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; }
+.pay-includes summary { color: var(--ink); cursor: pointer; font-size: 0.86rem; font-weight: 700; margin-bottom: 8px; }
+.pay-summary span small { display: block; font-size: 0.74rem; font-weight: 600; margin-top: 2px; }
 .pay-seats { align-items: center; border: 1px solid var(--line); border-radius: 12px; display: flex; gap: 14px; justify-content: space-between; padding: 12px 14px; }
 .pay-seats > div:first-child { display: grid; gap: 3px; }
 .pay-seats strong { color: var(--ink); font-size: 0.9rem; }
@@ -617,6 +634,9 @@ button.chip { border: 0; }
 .upgrade-card .empty-icon { background: var(--brand-soft); color: var(--brand); }
 @media (max-width: 640px) {
   .pay-seats { align-items: stretch; flex-direction: column; }
+  .period-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .plans-period { align-items: stretch; flex-direction: column; }
+  .plan-includes.compact { grid-template-columns: 1fr; }
   .plan-strip { flex-wrap: wrap; }
   .plan-strip .btn { justify-content: center; width: 100%; }
 }

@@ -1,10 +1,34 @@
 import { useEffect, useRef, useState } from 'react'
 import Icon from '../components/Icon.jsx'
-import { Button, Modal, Segmented } from '../components/ui.jsx'
+import { Button, Modal } from '../components/ui.jsx'
 import { api } from '../lib/api.js'
 import { formatBytes, formatPrice } from '../lib/format.js'
-import { planPeople, planTotal } from '../lib/plans.js'
+import { BILLING_PERIODS, billingPeriod, includesList, planAmount } from '../lib/plans.js'
 import { useWorkspace } from './context.js'
+
+// Pay for 1, 3, 6 or 12 months; longer periods cost less per month.
+export function PeriodPicker({ value, onChange }) {
+  return (
+    <div className="period-picker" role="radiogroup" aria-label="How long to pay for">
+      {BILLING_PERIODS.map((period) => (
+        <button key={period.value} type="button" role="radio" aria-checked={value === period.value} className={value === period.value ? 'active' : ''} onClick={() => onChange(period.value)}>
+          <strong>{period.label}</strong>
+          <small>{period.saving || 'Pay as you go'}</small>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// The full list of what a plan includes.
+export function PlanIncludes({ plan, compact = false }) {
+  const items = includesList(plan)
+  return (
+    <ul className={`plan-includes${compact ? ' compact' : ''}`}>
+      {items.map((item) => <li key={item}><Icon name="check" size={14} />{item}</li>)}
+    </ul>
+  )
+}
 
 function PeopleStepper({ value, min, max, onChange }) {
   return (
@@ -42,9 +66,15 @@ export function PayModal({ onClose, plan: initialPlan, interval: initialInterval
   const inUse = billing ? billing.usage.members + billing.usage.pendingInvites : 1
   // A plan's base price always covers its included people.
   const seats = plan ? (plan.extraUserPrice ? Math.min(plan.userLimit, Math.max(people, plan.includedUsers)) : plan.includedUsers) : people
-  const price = plan ? planTotal(plan, interval, seats) : null
+  const period = billingPeriod(interval)
+  const price = plan ? planAmount(plan, interval, seats) : null
   const tooSmall = plan && seats < inUse
-  const saving = plan?.monthlyPrice && plan?.yearlyPrice ? Math.round((1 - plan.yearlyPrice / (plan.monthlyPrice * 12)) * 100) : 0
+  const [today] = useState(() => new Date())
+  // A renewal of the same plan adds time after the current paid period.
+  const sub = billing?.subscription
+  const renewing = sub && plan && sub.plan === plan.name && sub.status === 'active' && sub.currentPeriodEnd && new Date(sub.currentPeriodEnd) > today
+  const from = renewing ? new Date(sub.currentPeriodEnd) : today
+  const until = new Date(from.getFullYear(), from.getMonth() + period.months, from.getDate())
 
   async function pay() {
     setBusy(true)
@@ -66,17 +96,15 @@ export function PayModal({ onClose, plan: initialPlan, interval: initialInterval
             <span>Online payment isn’t switched on yet. {billing.supportEmail ? <>Contact <strong>{billing.supportEmail}</strong> to pay by bank transfer.</> : 'Contact OVO to upgrade.'}</span>
           </div>
         ) : <>
-          <div className="pay-period">
-            <Segmented label="Billing period" value={interval} onChange={setInterval} options={[{ value: 'monthly', label: 'Monthly' }, { value: 'yearly', label: saving > 0 ? `Yearly · save ${saving}%` : 'Yearly' }]} />
-          </div>
+          <PeriodPicker value={interval} onChange={setInterval} />
           <div className="pay-plans" role="radiogroup" aria-label="Plan">
             {billing.plans.filter((item) => item.monthlyPrice).map((item) => {
-              const amount = interval === 'yearly' ? item.yearlyPrice : item.monthlyPrice
+              const amount = planAmount(item, interval, item.includedUsers)
               return (
                 <button key={item.name} type="button" role="radio" aria-checked={chosen === item.name} className={chosen === item.name ? 'active' : ''} disabled={!amount} onClick={() => setChosen(item.name)}>
                   <span className="pay-plan-top"><strong>{item.name}</strong>{item.name === billing.subscription.plan && <small>Current</small>}</span>
-                  <span className="pay-plan-price">{amount ? formatPrice(amount, item.currency) : '—'}<em>/{interval === 'yearly' ? 'year' : 'month'}</em></span>
-                  <span className="pay-plan-meta">{planPeople(item)} · {formatBytes(item.storageLimitBytes)}</span>
+                  <span className="pay-plan-price">{amount ? formatPrice(amount, item.currency) : '—'}<em>/{period.short}</em></span>
+                  <span className="pay-plan-meta">{item.includedUsers} people · {formatBytes(item.storageLimitBytes)}</span>
                 </button>
               )
             })}
@@ -85,14 +113,23 @@ export function PayModal({ onClose, plan: initialPlan, interval: initialInterval
             <div className="pay-seats">
               <div>
                 <strong>How many people?</strong>
-                <small>{plan.includedUsers} included in the price · {formatPrice(plan.extraUserPrice * (interval === 'yearly' ? 10 : 1), plan.currency)} per extra person/{interval === 'yearly' ? 'year' : 'month'}. You have {inUse} now.</small>
+                <small>{plan.includedUsers} included in the price · {formatPrice(Math.round(plan.extraUserPrice * period.monthsCharged), plan.currency)} per extra person for {period.months === 1 ? 'the month' : period.months === 12 ? 'the year' : `${period.months} months`}. You have {inUse} now.</small>
               </div>
               <PeopleStepper value={seats} min={Math.max(1, inUse)} max={plan.userLimit} onChange={setPeople} />
             </div>
           ) : null}
+          {plan && (
+            <details className="pay-includes" open>
+              <summary>What you get on {plan.name}</summary>
+              <PlanIncludes plan={plan} compact />
+            </details>
+          )}
           {tooSmall && <p className="invite-error">The {plan.name} plan is for up to {plan.includedUsers} people and you have {inUse}. Choose a bigger plan or remove people first.</p>}
           <div className="pay-summary">
-            <span>Total today{plan?.extraUserPrice && seats > plan.includedUsers ? ` · ${seats} people` : ''}</span>
+            <span>
+              Total for {period.months === 1 ? '1 month' : period.months === 12 ? '1 year' : `${period.months} months`}{plan?.extraUserPrice && seats > plan.includedUsers ? ` · ${seats} people` : ''}
+              <small>Covers you until about {until.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}{period.saving ? ` · ${period.saving}` : ''}</small>
+            </span>
             <strong>{price ? formatPrice(price, plan.currency) : '—'}</strong>
           </div>
           <p className="pay-secure"><Icon name="shield" size={14} />Secured by Paystack — card, bank transfer or USSD. Your plan activates as soon as payment is confirmed.</p>
