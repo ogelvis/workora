@@ -13,6 +13,7 @@ import Sheet from './views/Sheet.jsx'
 import Forms from './views/Forms.jsx'
 import Automations from './views/Automations.jsx'
 import Updates, { UPDATE_CATEGORIES } from './views/Updates.jsx'
+import { PayModal } from './Pay.jsx'
 import Overview from './views/Overview.jsx'
 import Projects from './views/Projects.jsx'
 import Tasks from './views/Tasks.jsx'
@@ -68,6 +69,7 @@ function Workspace({ account, setAccount, onSignedOut }) {
   const [searching, setSearching] = useState(false)
   const [newSheet, setNewSheet] = useState(null)
   const [latestUpdate, setLatestUpdate] = useState(null)
+  const [paying, setPaying] = useState(false)
   const industry = industryFor(account.organization.industry)
 
   const allowed = useMemo(() => allowedViews(role), [role])
@@ -203,7 +205,7 @@ function Workspace({ account, setAccount, onSignedOut }) {
   }
 
   const context = {
-    account, setAccount, role, data, loaded, reload, navigate, params: route.params, search, setSearch,
+    account, setAccount, role, data, loaded, reload, navigate, params: route.params, search, setSearch, openPayment: () => setPaying(true),
     openForm, save, remove, patch, toast, confirm: setConfirm,
     isManager: MANAGER_ROLES.includes(role), isAdmin: ADMIN_ROLES.includes(role),
   }
@@ -317,13 +319,22 @@ function Workspace({ account, setAccount, onSignedOut }) {
               <a href="#/settings?tab=security">Set password</a>
             </div>
           )}
-          {account.subscription?.trialExpired && ADMIN_ROLES.includes(role) && (
-            <div className="ws-banner">
-              <Icon name="alert" size={16} />
-              Your free trial has ended. Your workspace keeps working while billing is being set up.
-              <a href="#/billing">View plan</a>
-            </div>
-          )}
+          {ADMIN_ROLES.includes(role) && view !== 'billing' && (() => {
+            const subscription = account.subscription
+            if (!subscription) return null
+            const daysLeft = subscription.status === 'active' && subscription.currentPeriodEnd ? Math.ceil((new Date(subscription.currentPeriodEnd) - Date.now()) / 86_400_000) : null
+            const lapsed = subscription.trialExpired || ['past_due', 'expired', 'cancelled'].includes(subscription.status) || (daysLeft !== null && daysLeft < 0)
+            if (!lapsed && (daysLeft === null || daysLeft > 7)) return null
+            return (
+              <div className="ws-banner">
+                <Icon name="alert" size={16} />
+                <span>{lapsed
+                  ? (subscription.status === 'trial' ? 'Your free trial has ended. Pay for a plan to keep growing your workspace.' : 'Your plan has lapsed. Renew to keep everything running smoothly.')
+                  : `Your ${subscription.plan} plan ${daysLeft === 0 ? 'ends today' : `ends in ${daysLeft} ${daysLeft === 1 ? 'day' : 'days'}`}.`}</span>
+                <button type="button" className="ws-banner-action" onClick={() => setPaying(true)}>{lapsed ? 'Pay now' : 'Renew now'}</button>
+              </div>
+            )
+          })()}
           {latestUpdate && view !== 'updates' && (
             <div className={`ws-banner ws-banner-update tone-${UPDATE_CATEGORIES[latestUpdate.category]?.tone || 'violet'}`}>
               <Icon name={UPDATE_CATEGORIES[latestUpdate.category]?.icon || 'sparkle'} size={16} />
@@ -348,6 +359,7 @@ function Workspace({ account, setAccount, onSignedOut }) {
       )}
       {confirm && <Confirm {...confirm} onClose={() => setConfirm(null)} />}
       {searching && <SearchPalette onClose={() => setSearching(false)} />}
+      {paying && <PayModal onClose={() => setPaying(false)} />}
       {newSheet !== null && <NewSheetModal initialTemplate={newSheet} onClose={() => setNewSheet(null)} />}
     </WorkspaceContext.Provider>
   )
