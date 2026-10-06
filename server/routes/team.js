@@ -1,10 +1,12 @@
+import bcrypt from 'bcryptjs'
 import express from 'express'
 import { paystackEnabled } from './billing.js'
+import { emailConfigured, inviteEmail, passwordResetEmail, sendMail } from '../mail.js'
 import { z } from 'zod'
 import { pool } from '../db.js'
 import { requireAuth, requireRole } from '../auth.js'
 import {
-  ADMINS, HttpError, appUrl, createToken, emailSchema, getSubscription, logActivity, route,
+  ADMINS, HttpError, appUrl, createToken, emailSchema, getSubscription, logActivity, passwordSchema, route,
   validationError, withTransaction,
 } from '../lib.js'
 
@@ -113,7 +115,29 @@ router.post('/members/:userId/reset-link', adminsOnly, route(async (request, res
     [request.params.userId, tokenHash, request.auth.userId, expiresAt],
   )
   await logActivity(pool, request.auth, 'created a password reset link for', 'member', member.full_name)
-  return response.status(201).json({ link: appUrl(request, `/?reset=${token}`), expiresAt })
+  const link = appUrl(request, `/?reset=${token}`)
+  // With email set up, the member gets the link straight away; the owner still sees it to share another way.
+  let emailed = false
+  if (emailConfigured()) {
+    const user = await pool.query('SELECT email FROM users WHERE id = $1', [request.params.userId])
+    emailed = (await sendMail({ to: user.rows[0].email, ...passwordResetEmail({ fullName: member.full_name, link }) })).sent
+  }
+  return response.status(201).json({ link, expiresAt, emailed })
+}))
+
+// Owners and admins can also set a new password for someone directly (for staff without email).
+router.post('/members/:userId/password', adminsOnly, route(async (request, response) => {
+  const { password } = z.object({ password: passwordSchema }).parse(request.body)
+  if (request.params.userId === request.auth.userId) throw new HttpError(400, 'Change your own password under Settings → Security.')
+  const member = await getMember(pool, request.auth.organizationId, request.params.userId)
+  if (!canManage(request.auth.role, member.role)) throw new HttpError(403, 'You do not have permission to change this member’s password.')
+  const passwordHash = await bcrypt.hash(password, 12)
+  await withTransaction(async (client) => {
+    await client.query('UPDATE users SET password_hash = $1, password_set = true WHERE id = $2', [passwordHash, request.params.userId])
+    await client.query('DELETE FROM user_sessions WHERE user_id = $1', [request.params.userId])
+    await logActivity(client, request.auth, 'set a new password for', 'member', member.full_name)
+  })
+  return response.json({ ok: true })
 }))
 
 // ---------------------------------------------------------------- Invitations
@@ -168,9 +192,15 @@ router.post('/invitations', adminsOnly, route(async (request, response) => {
     await logActivity(client, request.auth, `invited a new ${role}`, 'invitation', email)
     return result.rows[0]
   })
+  const link = appUrl(request, `/?invite=${token}`)
+  // With email set up, OVO sends the invitation itself; the link is still returned to share another way.
+  const sent = emailConfigured()
+    ? await sendMail({ to: email, ...inviteEmail({ inviterName: request.auth.fullName, organizationName: request.auth.organizationName, role, link, expiresAt }) })
+    : { sent: false }
   return response.status(201).json({
     invitation: { ...invitation, invitedBy: request.auth.fullName },
-    link: appUrl(request, `/?invite=${token}`),
+    link,
+    emailed: sent.sent,
   })
 }))
 

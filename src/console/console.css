@@ -215,3 +215,50 @@ button.cx-kpi:hover { box-shadow: 0 18px 32px -24px color-mix(in srgb, var(--ton
   .an-inbox iframe { height: 520px; }
   .an-actions .btn { justify-content: center; width: 100%; }
 }
+
+/* Revenue: money in = categorical slot 1 (blue), money out = slot 2 (orange); validated for CVD and contrast. */
+.rv-tiles { display: grid; gap: 14px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.rv-tile { display: flex; flex-direction: column; gap: 6px; padding: 16px 18px; }
+.rv-tile strong { color: var(--ink); font-size: 1.5rem; letter-spacing: -0.03em; }
+.rv-tile strong.negative { color: var(--danger); }
+.rv-tile small { color: var(--muted); font-size: 0.8rem; }
+.rv-tile-label { align-items: center; color: var(--muted); display: inline-flex; font-size: 0.74rem; font-weight: 700; gap: 7px; letter-spacing: 0.04em; text-transform: uppercase; }
+.rv-swatch { border-radius: 3px; display: inline-block; flex-shrink: 0; height: 10px; width: 10px; }
+.rv-swatch.in, .rv-bar.in, .rv-cat-track i.in { background: #2a78d6; }
+.rv-swatch.out, .rv-bar.out, .rv-cat-track i.out { background: #eb6834; }
+.rv-card { display: flex; flex-direction: column; gap: 6px; }
+.rv-card .card-head { align-items: flex-start; flex-wrap: wrap; gap: 12px; }
+.rv-chart { padding: 4px 20px 18px; }
+.rv-legend { color: var(--text, #2e2b45); display: flex; font-size: 0.8rem; gap: 16px; margin-bottom: 10px; }
+.rv-legend span { align-items: center; display: inline-flex; gap: 6px; }
+.rv-plot { display: grid; gap: 8px; grid-template-columns: auto minmax(0, 1fr); height: 260px; }
+.rv-axis { color: var(--muted); display: flex; flex-direction: column; font-size: 0.7rem; justify-content: space-between; padding-bottom: 22px; text-align: right; }
+.rv-axis span { line-height: 1; transform: translateY(50%); }
+.rv-axis span:first-child { transform: translateY(0); }
+.rv-axis span:last-child { transform: translateY(0); }
+.rv-area { position: relative; }
+.rv-grid { border-top: 1px solid var(--line-soft); left: 0; position: absolute; right: 0; }
+.rv-columns { bottom: 0; display: flex; gap: 4px; left: 0; position: absolute; right: 0; top: 0; }
+.rv-col { background: none; border: 0; border-radius: 8px; display: flex; flex: 1; flex-direction: column; min-width: 0; padding: 0; position: relative; }
+.rv-col.active { background: color-mix(in srgb, var(--soft) 70%, transparent); }
+.rv-bars { align-items: flex-end; display: flex; flex: 1; gap: 2px; justify-content: center; padding: 0 3px; }
+.rv-bar { border-radius: 4px 4px 0 0; display: block; max-width: 16px; min-height: 0; width: 42%; }
+.rv-month { color: var(--muted); font-size: 0.7rem; height: 22px; line-height: 22px; text-align: center; }
+.rv-tip { background: var(--ink); border-radius: 10px; bottom: calc(100% - 30px); box-shadow: var(--shadow-pop); color: #fff; display: flex; flex-direction: column; font-size: 0.78rem; gap: 4px; left: 50%; padding: 10px 12px; pointer-events: none; position: absolute; text-align: left; transform: translate(-50%, -8px); white-space: nowrap; z-index: 5; }
+.rv-tip.left { left: auto; right: 0; transform: translate(0, -8px); }
+.rv-tip span { align-items: center; display: flex; gap: 6px; }
+.rv-tip b { margin-left: auto; padding-left: 12px; }
+.rv-tip-net { border-top: 1px solid rgba(255, 255, 255, 0.2); padding-top: 4px; }
+.rv-cats { display: grid; gap: 24px; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0 20px 18px; }
+.rv-cats > div { display: flex; flex-direction: column; gap: 10px; }
+.rv-cat { align-items: center; display: grid; font-size: 0.84rem; gap: 10px; grid-template-columns: 130px minmax(0, 1fr) auto; }
+.rv-cat span { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-cat-track { background: var(--soft); border-radius: 999px; height: 8px; overflow: hidden; }
+.rv-cat-track i { border-radius: 999px; display: block; height: 100%; }
+.rv-amount.inflow { color: #1f5fae; }
+.rv-amount.outflow { color: #b34a1f; }
+.rv-source { font-size: 0.76rem; }
+@media (max-width: 1000px) { .rv-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .rv-cats { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 560px) { .rv-tiles { grid-template-columns: minmax(0, 1fr); } .rv-month { font-size: 0.6rem; } .rv-plot { height: 220px; } }
+.rv-tip { bottom: auto; top: 4px; transform: translate(-50%, 0); }
+.rv-tip.left { transform: none; }

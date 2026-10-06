@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import Icon from '../components/Icon.jsx'
+import { Avatar } from '../components/ui.jsx'
 import { api } from '../lib/api.js'
 import { useWorkspace } from './context.js'
 import { SheetIcon } from './views/Sheets.jsx'
@@ -144,6 +145,49 @@ export function SearchPalette({ onClose }) {
           })}
         </div>
       </div>
+    </div>
+  )
+}
+
+// The avatar menu: who you're signed in as, your account, inviting people and a clear way to log out.
+export function AccountMenu({ account, role, onInvite, onLogout }) {
+  const [open, setOpen] = useState(false)
+  const root = useRef(null)
+  useEffect(() => {
+    if (!open) return undefined
+    const onDown = (event) => { if (!root.current?.contains(event.target)) setOpen(false) }
+    const onKey = (event) => { if (event.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
+  }, [open])
+  const admin = ['owner', 'admin'].includes(role)
+  const go = (hash) => { setOpen(false); window.location.hash = hash }
+  return (
+    <div className="account-root" ref={root}>
+      <button type="button" className="account-btn" aria-expanded={open} aria-haspopup="menu" aria-label="Your account" onClick={() => setOpen(!open)}>
+        <Avatar name={account.user.fullName} size="sm" />
+        <Icon name="down" size={14} />
+      </button>
+      {open && (
+        <div className="account-menu" role="menu">
+          <div className="account-who">
+            <Avatar name={account.user.fullName} />
+            <div>
+              <strong>{account.user.fullName}</strong>
+              <small>{account.user.email}</small>
+              <span>{account.organization.name} · {role.charAt(0).toUpperCase() + role.slice(1)}</span>
+            </div>
+          </div>
+          <button type="button" role="menuitem" onClick={() => go('/settings?tab=account')}><Icon name="clients" size={16} />My account</button>
+          {admin && <button type="button" role="menuitem" onClick={() => { setOpen(false); onInvite() }}><Icon name="plus" size={16} />Invite people</button>}
+          <button type="button" role="menuitem" onClick={() => go('/settings?tab=team')}><Icon name="team" size={16} />Team members</button>
+          {admin && <button type="button" role="menuitem" onClick={() => go('/billing')}><Icon name="billing" size={16} />Plan & billing</button>}
+          <button type="button" role="menuitem" onClick={() => go('/settings?tab=security')}><Icon name="shield" size={16} />Password & security</button>
+          <button type="button" role="menuitem" onClick={() => go('/updates')}><Icon name="sparkle" size={16} />What’s new</button>
+          <button type="button" role="menuitem" className="account-logout" onClick={() => { setOpen(false); onLogout() }}><Icon name="logout" size={16} />Log out</button>
+        </div>
+      )}
     </div>
   )
 }

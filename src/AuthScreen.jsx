@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import Icon from './components/Icon.jsx'
 import { BrandMark, Field } from './components/ui.jsx'
 import { api } from './lib/api.js'
-import { capitalize } from './lib/format.js'
 import { INDUSTRIES, SHEET_TEMPLATES } from '../shared/industries.js'
 import './auth.css'
 
@@ -14,6 +13,27 @@ const copy = {
   forgot: { eyebrow: 'Account recovery', title: 'Forgot your password?' },
 }
 
+const LAST_EMAIL = 'ovo.lastEmail'
+function lastEmail() {
+  try { return localStorage.getItem(LAST_EMAIL) || '' } catch { return '' }
+}
+function rememberEmail(email) {
+  try { if (email) localStorage.setItem(LAST_EMAIL, email.trim().toLowerCase()) } catch { /* private mode */ }
+}
+
+// A password box with a show/hide eye, so people can check what they typed.
+function PasswordInput({ name, autoComplete, minLength }) {
+  const [visible, setVisible] = useState(false)
+  return (
+    <span className="password-wrap">
+      <input name={name} type={visible ? 'text' : 'password'} required minLength={minLength} maxLength={128} autoComplete={autoComplete} />
+      <button type="button" className="password-eye" onClick={() => setVisible(!visible)} aria-label={visible ? 'Hide password' : 'Show password'} aria-pressed={visible}>
+        <Icon name="eye" size={16} />
+      </button>
+    </span>
+  )
+}
+
 function AuthScreen({ mode, setMode, token, onAuthenticated, onBack, initialNotice = '', initialError = '' }) {
   const [error, setError] = useState(initialError)
   const [notice, setNotice] = useState(initialNotice)
@@ -22,6 +42,29 @@ function AuthScreen({ mode, setMode, token, onAuthenticated, onBack, initialNoti
   const [tokenError, setTokenError] = useState('')
   const [industry, setIndustry] = useState('')
   const [step, setStep] = useState(1)
+  const [emailEnabled, setEmailEnabled] = useState(null)
+  const [resetSent, setResetSent] = useState('')
+
+  useEffect(() => {
+    if (mode !== 'forgot' || emailEnabled !== null) return
+    api('/api/auth/options').then((result) => setEmailEnabled(result.emailEnabled)).catch(() => setEmailEnabled(false))
+  }, [mode, emailEnabled])
+
+  async function requestReset(event) {
+    event.preventDefault()
+    const email = new FormData(event.currentTarget).get('email')
+    setBusy(true)
+    setError('')
+    try {
+      await api('/api/auth/forgot', { method: 'POST', body: { email } })
+      rememberEmail(email)
+      setResetSent(email)
+    } catch (requestError) {
+      setError(requestError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   useEffect(() => {
     if (!token || !['invite', 'reset'].includes(mode)) return
@@ -32,6 +75,7 @@ function AuthScreen({ mode, setMode, token, onAuthenticated, onBack, initialNoti
   function switchMode(next) {
     setError('')
     setNotice('')
+    setResetSent('')
     setStep(1)
     setMode(next)
   }
@@ -53,6 +97,7 @@ function AuthScreen({ mode, setMode, token, onAuthenticated, onBack, initialNoti
       values.acceptTerms = true
     }
     setBusy(true)
+    if (values.email) rememberEmail(values.email)
     try {
       if (mode === 'login') onAuthenticated(await api('/api/auth/login', { method: 'POST', body: values }))
       if (mode === 'register') onAuthenticated(await api('/api/auth/register', { method: 'POST', body: { ...values, industry } }))
@@ -105,7 +150,10 @@ function AuthScreen({ mode, setMode, token, onAuthenticated, onBack, initialNoti
           <h1>{text.title}</h1>
 
           {mode === 'invite' && tokenInfo && (
-            <p className="auth-lede">Join <strong>{tokenInfo.organizationName}</strong> as {tokenInfo.role === 'admin' ? 'an' : 'a'} <strong>{capitalize(tokenInfo.role)}</strong>.</p>
+            <div className="auth-invite">
+              <span className="auth-invite-icon"><Icon name="team" size={18} /></span>
+              <p>{tokenInfo.invitedBy ? <><strong>{tokenInfo.invitedBy}</strong> invited you to join</> : 'You’re invited to join'} <strong>{tokenInfo.organizationName}</strong> as {tokenInfo.role === 'admin' ? 'an admin' : tokenInfo.role === 'manager' ? 'a manager' : 'a team member'}. Just add your name and choose a password.</p>
+            </div>
           )}
           {mode === 'reset' && tokenInfo && <p className="auth-lede">Resetting the password for <strong>{tokenInfo.email}</strong>.</p>}
           {mode === 'register' && <p className="auth-lede">{step === 1 ? 'Step 1 of 2 · What kind of business are you? OVO shapes your workspace around it.' : 'Step 2 of 2 · Your 14-day trial starts today. No card required.'}</p>}
@@ -119,16 +167,33 @@ function AuthScreen({ mode, setMode, token, onAuthenticated, onBack, initialNoti
           {notice && <div className="auth-notice"><Icon name="check" size={16} />{notice}</div>}
 
           {mode === 'forgot' ? (
-            <div className="auth-forgot">
-              <p>Email delivery isn’t set up for OVO yet, so we can’t send you a reset email.</p>
-              <ol>
-                <li>Ask the owner or an admin of your workspace to open <strong>Settings → Team</strong>.</li>
-                <li>They choose <strong>Create password reset link</strong> next to your name.</li>
-                <li>Open the link they send you and choose a new password.</li>
-              </ol>
-              <p className="muted">If you are the workspace owner and can’t sign in, contact OVO support.</p>
-              <button type="button" className="auth-submit" onClick={() => switchMode('login')}>Back to sign in</button>
-            </div>
+            emailEnabled === null ? <div className="auth-loading"><span className="spinner" /></div>
+              : resetSent ? (
+                <div className="auth-forgot">
+                  <div className="auth-notice"><Icon name="check" size={16} />Check your inbox</div>
+                  <p>If <strong>{resetSent}</strong> belongs to an OVO account, we’ve sent it a link to choose a new password. It expires in 1 hour — check your spam folder if you don’t see it.</p>
+                  <button type="button" className="auth-submit" onClick={() => switchMode('login')}>Back to sign in</button>
+                </div>
+              ) : emailEnabled ? (
+                <form className="auth-form" onSubmit={requestReset}>
+                  <p className="auth-lede">Enter the email you sign in with and we’ll send you a link to choose a new password.</p>
+                  <Field label="Work email"><input name="email" type="email" required autoComplete="email" defaultValue={lastEmail()} /></Field>
+                  {error && <p className="form-error" role="alert">{error}</p>}
+                  <button type="submit" className="auth-submit" disabled={busy}>{busy ? 'Sending…' : 'Send reset link'}<Icon name="send" size={16} /></button>
+                  <button type="button" className="auth-link center" onClick={() => switchMode('login')}>Back to sign in</button>
+                </form>
+              ) : (
+                <div className="auth-forgot">
+                  <p>Ask your workspace owner or an admin to reset it for you:</p>
+                  <ol>
+                    <li>They open <strong>Settings → Team</strong>.</li>
+                    <li>They choose <strong>Create password reset link</strong> next to your name.</li>
+                    <li>Open the link they send you and choose a new password.</li>
+                  </ol>
+                  <p className="muted">If you are the workspace owner and can’t sign in, contact OVO support.</p>
+                  <button type="button" className="auth-submit" onClick={() => switchMode('login')}>Back to sign in</button>
+                </div>
+              )
           ) : mode === 'register' && step === 1 ? (
             <div className="industry-step">
               <div className="industry-grid" role="radiogroup" aria-label="Business type">
@@ -159,11 +224,11 @@ function AuthScreen({ mode, setMode, token, onAuthenticated, onBack, initialNoti
               </>}
               {['register', 'invite'].includes(mode) && <Field label="Your full name"><input name="fullName" minLength={2} maxLength={120} required autoComplete="name" /></Field>}
               {mode === 'invite' && <Field label="Email"><input type="email" value={tokenInfo?.email || ''} readOnly disabled /></Field>}
-              {['login', 'register'].includes(mode) && <Field label={mode === 'register' ? 'Your work email' : 'Work email'}><input name="email" type="email" required autoComplete="email" /></Field>}
+              {['login', 'register'].includes(mode) && <Field label={mode === 'register' ? 'Your work email' : 'Work email'}><input name="email" type="email" required autoComplete="email" defaultValue={mode === 'login' ? lastEmail() : ''} autoFocus={mode === 'login' && !lastEmail()} /></Field>}
               <Field label="Password" hint={mode !== 'login' ? 'At least 12 characters' : undefined}>
-                <input name="password" type="password" required minLength={mode === 'login' ? 1 : 12} maxLength={128} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
+                <PasswordInput name="password" minLength={mode === 'login' ? 1 : 12} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
               </Field>
-              {mode !== 'login' && <Field label="Confirm password"><input name="confirmPassword" type="password" required minLength={12} maxLength={128} autoComplete="new-password" /></Field>}
+              {mode !== 'login' && <Field label="Confirm password"><PasswordInput name="confirmPassword" minLength={12} autoComplete="new-password" /></Field>}
               {['register', 'invite'].includes(mode) && (
                 <label className="auth-terms">
                   <input type="checkbox" name="acceptTerms" required />
@@ -178,6 +243,12 @@ function AuthScreen({ mode, setMode, token, onAuthenticated, onBack, initialNoti
             </form>
           ) : !tokenError && <div className="auth-loading"><span className="spinner" />Checking your link…</div>}
 
+          {mode === 'login' && (
+            <div className="auth-help">
+              <p><Icon name="plus" size={14} />New to OVO? <button type="button" onClick={() => switchMode('register')}>Create a free workspace</button></p>
+              <p><Icon name="mail" size={14} />Invited by your team? Open the link in your invitation email or message — no need to sign up.</p>
+            </div>
+          )}
           {['invite', 'reset'].includes(mode) && (
             <p className="auth-switch">Already have access? <button type="button" onClick={() => switchMode('login')}>Sign in</button></p>
           )}

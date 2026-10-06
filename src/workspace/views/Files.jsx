@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Icon from '../../components/Icon.jsx'
-import { Avatar, Button, IconButton, Meter, PageHeader } from '../../components/ui.jsx'
+import { Avatar, Button, Field, IconButton, Meter, Modal, PageHeader } from '../../components/ui.jsx'
 import { api, uploadFile } from '../../lib/api.js'
 import { formatBytes, timeAgo } from '../../lib/format.js'
 import { useWorkspace } from '../context.js'
 import { ShareModal } from '../Share.jsx'
+import { downloadZip } from '../../lib/zip.js'
 
 function fileKind(file) {
   const extension = file.name.split('.').pop().toLowerCase()
@@ -18,6 +19,39 @@ function fileKind(file) {
   return [extension.slice(0, 3).toUpperCase() || 'FILE', 'other']
 }
 
+function NewFolderModal({ vault, onClose, onCreated }) {
+  const { toast } = useWorkspace()
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  async function submit(event) {
+    event.preventDefault()
+    setBusy(true)
+    try {
+      await api('/api/files/folders', { method: 'POST', body: { name, vault } })
+      toast(`Folder “${name.trim()}” added`)
+      onCreated(name.trim())
+    } catch (error) {
+      toast(error.message, 'error')
+      setBusy(false)
+    }
+  }
+  return (
+    <Modal title="New folder" eyebrow={vault ? 'Document Vault' : 'Files'} onClose={onClose} width={440} busy={busy}>
+      <form onSubmit={submit}>
+        <div className="modal-body stack-sm">
+          <Field label="Folder name" hint={vault ? 'Only owners and admins can open vault folders.' : 'Everyone in the workspace can see files in this folder.'}>
+            <input value={name} onChange={(event) => setName(event.target.value)} maxLength={60} required autoFocus placeholder={vault ? 'e.g. Land Titles' : 'e.g. Site Photos'} />
+          </Field>
+        </div>
+        <div className="modal-foot">
+          <Button onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button type="submit" variant="primary" icon="plus" disabled={busy || !name.trim()}>{busy ? 'Adding…' : 'Add folder'}</Button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
 function Files({ vault }) {
   const { account, isManager, isAdmin, reload, confirm, toast, search } = useWorkspace()
   const [state, setState] = useState({ files: [], folders: [], maxFileBytes: 4 * 1024 * 1024, storage: null })
@@ -25,6 +59,8 @@ function Files({ vault }) {
   const [uploading, setUploading] = useState(null)
   const [dragging, setDragging] = useState(false)
   const [sharing, setSharing] = useState(null)
+  const [addingFolder, setAddingFolder] = useState(false)
+  const [zipping, setZipping] = useState('')
   const input = useRef(null)
 
   const load = useCallback(async () => {
@@ -42,7 +78,7 @@ function Files({ vault }) {
   async function upload(fileList) {
     const files = [...fileList]
     if (!files.length) return
-    const target = folder || state.folders[state.folders.length - 1]?.name
+    const target = folder || (vault ? 'Financial Records' : 'Shared Files')
     let done = 0
     // Mirror the server's hard limit so people learn before uploading; the server still decides.
     let remaining = state.storage ? state.storage.limitBytes - state.storage.usedBytes : Infinity
@@ -92,6 +128,37 @@ function Files({ vault }) {
     .filter((file) => !query || `${file.name} ${file.folder} ${file.uploadedBy || ''}`.toLowerCase().includes(query))
   const canDelete = (file) => isAdmin || isManager || file.uploadedById === account.user.id
 
+  function removeFolder(item) {
+    confirm({
+      title: `Delete the “${item.name}” folder?`,
+      message: 'The folder is empty, so nothing else is deleted.',
+      confirmLabel: 'Delete folder',
+      onConfirm: async () => {
+        await api(`/api/files/folders?${new URLSearchParams({ name: item.name, vault: vault ? '1' : '0' })}`, { method: 'DELETE' })
+        if (folder === item.name) setFolder('')
+        toast('Folder deleted')
+        await load()
+      },
+    })
+  }
+
+  async function downloadAll() {
+    if (!files.length) return
+    setZipping(`Preparing 0 of ${files.length}…`)
+    try {
+      const count = await downloadZip(
+        files.map((file) => ({ name: file.name, url: `/api/files/${file.id}/download`, folder: folder ? '' : file.folder })),
+        `${account.organization.name} ${vault ? 'Document Vault' : 'Files'}${folder ? ` - ${folder}` : ''}`,
+        (done, total) => setZipping(`Preparing ${done} of ${total}…`),
+      )
+      toast(`Downloaded ${count} ${count === 1 ? 'file' : 'files'} as a ZIP`)
+    } catch (error) {
+      toast(error.message, 'error')
+    } finally {
+      setZipping('')
+    }
+  }
+
   return (
     <div
       className={`stack${dragging ? ' dragging' : ''}`}
@@ -108,6 +175,7 @@ function Files({ vault }) {
       >
         {vault && <span className="vault-badge"><Icon name="shield" size={15} /> Owners & admins only</span>}
         <input ref={input} type="file" multiple hidden onChange={(event) => upload(event.target.files)} />
+        {files.length > 0 && <Button icon="download" onClick={downloadAll} disabled={Boolean(zipping)}>{zipping || `Download all${folder ? ` in ${folder}` : ''}`}</Button>}
         <Button variant="primary" icon="upload" onClick={() => input.current?.click()} disabled={Boolean(uploading) || full}>
           {uploading ? 'Uploading…' : folder ? `Upload to ${folder}` : 'Upload'}
         </Button>
@@ -126,10 +194,20 @@ function Files({ vault }) {
           <Icon name={vault ? 'vault' : 'files'} size={16} /><span>All {vault ? 'records' : 'files'}</span><em>{state.files.length}</em>
         </button>
         {state.folders.map((item) => (
-          <button key={item.name} type="button" className={`folder${folder === item.name ? ' active' : ''}`} onClick={() => setFolder(item.name)}>
-            <Icon name="projects" size={16} /><span>{item.name}</span><em>{item.count}</em>
-          </button>
+          <span key={item.name} className={`folder-wrap${item.custom ? ' custom' : ''}`}>
+            <button type="button" className={`folder${folder === item.name ? ' active' : ''}`} onClick={() => setFolder(item.name)}>
+              <Icon name="projects" size={16} /><span>{item.name}</span><em>{item.count}</em>
+            </button>
+            {item.custom && state.canManageFolders && item.count === 0 && (
+              <button type="button" className="folder-remove" aria-label={`Delete folder ${item.name}`} title="Delete empty folder" onClick={() => removeFolder(item)}><Icon name="close" size={12} /></button>
+            )}
+          </span>
         ))}
+        {state.canManageFolders && (
+          <button type="button" className="folder folder-add" onClick={() => setAddingFolder(true)}>
+            <Icon name="plus" size={16} /><span>New folder</span>
+          </button>
+        )}
       </div>
 
       {uploading && <div className="upload-status"><span className="spinner" />{uploading}</div>}
@@ -184,6 +262,7 @@ function Files({ vault }) {
           </span>
         </div>
       )}
+      {addingFolder && <NewFolderModal vault={vault} onClose={() => setAddingFolder(false)} onCreated={async (name) => { setAddingFolder(false); await load(); setFolder(name) }} />}
       {sharing && <ShareModal type="file" id={sharing.id} name={sharing.name} onClose={() => setSharing(null)} />}
       {dragging && <div className="drop-overlay"><Icon name="upload" size={28} />Drop to upload{folder ? ` to ${folder}` : ''}</div>}
     </div>

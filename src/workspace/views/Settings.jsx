@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import Icon from '../../components/Icon.jsx'
-import { Avatar, Button, Field, IconButton, Menu, Modal, PageHeader, Pill, Segmented, copyText } from '../../components/ui.jsx'
+import { Avatar, Button, Field, IconButton, Modal, PageHeader, Pill, Segmented, copyText } from '../../components/ui.jsx'
 import { api } from '../../lib/api.js'
 import { capitalize, formatDateTime, timeAgo } from '../../lib/format.js'
 import { useWorkspace } from '../context.js'
@@ -76,41 +76,78 @@ function Profile() {
   )
 }
 
-function InviteForm({ role, onInvited }) {
+// Reset a teammate's password: email or share a link, or set a new password for them directly.
+function ResetPasswordModal({ member, onClose }) {
   const { toast } = useWorkspace()
+  const [mode, setMode] = useState('link')
   const [busy, setBusy] = useState(false)
-  async function submit(event) {
-    event.preventDefault()
-    const form = event.currentTarget
+  const [result, setResult] = useState(null)
+
+  async function createLink() {
     setBusy(true)
     try {
-      const values = Object.fromEntries(new FormData(form).entries())
-      const result = await api('/api/invitations', { method: 'POST', body: values })
-      form.reset()
-      onInvited(result)
+      setResult(await api(`/api/members/${member.id}/reset-link`, { method: 'POST' }))
     } catch (error) {
       toast(error.message, 'error')
     } finally {
       setBusy(false)
     }
   }
+
+  async function setPassword(event) {
+    event.preventDefault()
+    const values = Object.fromEntries(new FormData(event.currentTarget).entries())
+    if (values.password !== values.confirm) { toast('The two passwords don’t match.', 'error'); return }
+    setBusy(true)
+    try {
+      await api(`/api/members/${member.id}/password`, { method: 'POST', body: { password: values.password } })
+      toast(`New password set for ${member.fullName}. Tell them privately.`)
+      onClose()
+    } catch (error) {
+      toast(error.message, 'error')
+      setBusy(false)
+    }
+  }
+
+  const first = member.fullName.split(' ')[0]
   return (
-    <form className="invite-form" onSubmit={submit}>
-      <input name="email" type="email" required placeholder="name@company.com" aria-label="Email address" />
-      <select name="role" defaultValue="staff" aria-label="Role">
-        {role === 'owner' && <option value="admin">Admin</option>}
-        <option value="manager">Manager</option>
-        <option value="staff">Staff</option>
-      </select>
-      <button type="submit" className="btn btn-primary" disabled={busy}><Icon name="plus" size={16} />{busy ? 'Inviting…' : 'Invite'}</button>
-    </form>
+    <Modal title={`Reset ${first}’s password`} eyebrow="Team" onClose={onClose} width={540} busy={busy}>
+      <div className="modal-body stack-sm">
+        <div className="share-tabs" role="tablist">
+          <button type="button" role="tab" aria-selected={mode === 'link'} className={mode === 'link' ? 'active' : ''} onClick={() => setMode('link')}><Icon name="link" size={15} />Send a reset link</button>
+          <button type="button" role="tab" aria-selected={mode === 'set'} className={mode === 'set' ? 'active' : ''} onClick={() => setMode('set')}><Icon name="key" size={15} />Set a new password</button>
+        </div>
+        {mode === 'link' ? (result ? <>
+          <p className="confirm-text">{result.emailed
+            ? <>We emailed a reset link to <strong>{member.email}</strong>. You can also send it yourself:</>
+            : <>Send this link to {first} by WhatsApp, SMS or email. They open it and choose a new password.</>}</p>
+          <div className="invite-share">
+            <input readOnly value={result.link} onFocus={(event) => event.target.select()} aria-label="Reset link" />
+            <Button size="sm" icon="copy" onClick={async () => toast(await copyText(result.link) ? 'Link copied' : 'Copy the link manually')}>Copy link</Button>
+            <a className="btn btn-sm btn-whatsapp" href={`https://wa.me/?text=${encodeURIComponent(`Here's your link to reset your OVO password: ${result.link}`)}`} target="_blank" rel="noreferrer"><Icon name="chat" size={15} />WhatsApp</a>
+          </div>
+          <p className="muted-note">The link works once and expires in 24 hours.</p>
+        </> : <>
+          <p className="confirm-text">{first} gets a link to choose their own new password. Best when they can receive email or a message.</p>
+          <div className="share-actions"><Button variant="primary" icon="link" onClick={createLink} disabled={busy}>{busy ? 'Creating…' : 'Create reset link'}</Button></div>
+        </>) : (
+          <form className="stack-sm" onSubmit={setPassword}>
+            <p className="confirm-text">Choose a temporary password for {first} and tell them in person. They’ll be signed out everywhere and can change it later in Settings → Security.</p>
+            <Field label="New password" hint="At least 12 characters"><input name="password" type="text" required minLength={12} maxLength={128} autoComplete="off" /></Field>
+            <Field label="Type it again"><input name="confirm" type="text" required minLength={12} maxLength={128} autoComplete="off" /></Field>
+            <div className="share-actions"><Button type="submit" variant="primary" icon="key" disabled={busy}>{busy ? 'Saving…' : 'Set password'}</Button></div>
+          </form>
+        )}
+      </div>
+    </Modal>
   )
 }
 
 function Team() {
-  const { account, role, isAdmin, reload, data, confirm, toast, navigate } = useWorkspace()
+  const { account, role, isAdmin, reload, data, confirm, toast, navigate, openInvite } = useWorkspace()
   const [invitations, setInvitations] = useState([])
   const [link, setLink] = useState(null)
+  const [resetting, setResetting] = useState(null)
 
   const loadInvites = useCallback(async () => {
     if (!isAdmin) return
@@ -120,7 +157,11 @@ function Team() {
 
   useEffect(() => {
     loadInvites().catch((error) => toast(error.message, 'error'))
-  }, [loadInvites, toast])
+    // The invite window can be opened from anywhere; refresh the pending list when it sends.
+    const refresh = () => { loadInvites().catch(() => {}); reload(['members']) }
+    window.addEventListener('ovo:invited', refresh)
+    return () => window.removeEventListener('ovo:invited', refresh)
+  }, [loadInvites, toast, reload])
 
   const canManage = (target) => target.role !== 'owner' && target.id !== account.user.id && (role === 'owner' || (role === 'admin' && ['manager', 'staff'].includes(target.role)))
   const assignable = role === 'owner' ? ['admin', 'manager', 'staff'] : ['manager', 'staff']
@@ -130,19 +171,6 @@ function Team() {
       await api(`/api/members/${member.id}`, { method: 'PATCH', body: { role: nextRole } })
       await reload(['members'])
       toast(`${member.fullName} is now ${nextRole === 'admin' ? 'an' : 'a'} ${nextRole}`)
-    } catch (error) {
-      toast(error.message, 'error')
-    }
-  }
-
-  async function resetLink(member) {
-    try {
-      const result = await api(`/api/members/${member.id}/reset-link`, { method: 'POST' })
-      setLink({
-        title: `Password reset for ${member.fullName}`,
-        description: `Send this link to ${member.email}. It works once and expires in 24 hours. Their other sessions will be signed out.`,
-        link: result.link,
-      })
     } catch (error) {
       toast(error.message, 'error')
     }
@@ -178,15 +206,11 @@ function Team() {
     <div className="stack">
       {isAdmin && (
         <section className="card settings-card">
-          <div className="card-head"><div><h2>Invite your team</h2><p>We create a private invite link for you to share. It works once and expires in 7 days.</p></div></div>
-          <InviteForm role={role} onInvited={(result) => {
-            loadInvites()
-            setLink({
-              title: 'Invitation created',
-              description: `Share this link with ${result.invitation.email} so they can join as ${result.invitation.role}. Email delivery isn’t connected, so send it yourself.`,
-              link: result.link,
-            })
-          }} />
+          <div className="card-head">
+            <div><h2>Invite your team</h2><p>Add people by email. They get a link, choose a password and they’re in — links work once and expire in 7 days.</p></div>
+            <Button variant="primary" icon="plus" onClick={openInvite}>Invite people</Button>
+          </div>
+          {invitations.length > 0 && <span className="field-label invite-pending-label">Waiting to join</span>}
           {invitations.length > 0 && (
             <ul className="invite-list">
               {invitations.map((invitation) => (
@@ -226,10 +250,10 @@ function Team() {
                 <td className="muted">{timeAgo(member.joinedAt)}</td>
                 <td className="cell-actions">
                   {member.id !== account.user.id && <IconButton icon="chat" label={`Message ${member.fullName}`} onClick={() => navigate('chat', { dm: member.id })} />}
-                  {canManage(member) && <Menu items={[
-                    { label: 'Create password reset link', icon: 'key', onSelect: () => resetLink(member) },
-                    { label: 'Remove from workspace', icon: 'trash', danger: true, onSelect: () => removeMember(member) },
-                  ]} />}
+                  {canManage(member) && <>
+                    <Button size="sm" icon="key" onClick={() => setResetting(member)}>Reset password</Button>
+                    <Button size="sm" variant="danger" icon="trash" onClick={() => removeMember(member)}>Remove</Button>
+                  </>}
                 </td>
               </tr>
             ))}
@@ -243,6 +267,7 @@ function Team() {
         ))}
       </section>
       {link && <LinkModal {...link} onClose={() => setLink(null)} />}
+      {resetting && <ResetPasswordModal member={resetting} onClose={() => setResetting(null)} />}
     </div>
   )
 }

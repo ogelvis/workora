@@ -32,7 +32,7 @@ function Projects() {
       {projects.length ? (
         <div className="project-grid">
           {projects.map((project) => {
-            const progress = project.taskCount ? Math.round((project.completedTaskCount / project.taskCount) * 100) : 0
+            const progress = project.progress ?? (project.taskCount ? Math.round((project.completedTaskCount / project.taskCount) * 100) : 0)
             const due = project.status !== 'Completed' ? dueLabel(project.dueDate) : null
             return (
               <article key={project.id} className="project-card">
@@ -52,7 +52,7 @@ function Projects() {
                 {project.description && <p className="project-desc">{project.description}</p>}
                 <div className="progress">
                   <div className="progress-head">
-                    <span>{project.completedTaskCount} of {project.taskCount} tasks</span>
+                    <span>{project.completedTaskCount} of {project.taskCount} tasks done</span>
                     <strong>{progress}%</strong>
                   </div>
                   <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>

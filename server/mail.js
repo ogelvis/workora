@@ -195,7 +195,10 @@ export async function sendBatch(messages) {
   }
   for (let start = 0; start < messages.length; start += 5) {
     const results = await Promise.all(messages.slice(start, start + 5).map((message) => sendMail(message)))
-    for (const result of results) result.sent ? sent++ : failed++
+    for (const result of results) {
+      if (result.sent) sent++
+      else failed++
+    }
   }
   return { sent, failed }
 }
@@ -257,4 +260,50 @@ ${info.why}${optional ? ` To stop receiving product updates, go to Settings → 
     </table>
   </td></tr></table></body></html>`
   return { subject: category === 'product' ? title : `[${info.label}] ${title}`, text, html }
+}
+
+const ROLE_WORDS = { admin: 'an admin', manager: 'a manager', staff: 'a team member' }
+
+export function inviteEmail({ inviterName, organizationName, role, link, expiresAt }) {
+  const until = new Date(expiresAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+  const as = ROLE_WORDS[role] || 'a team member'
+  const text = `Hello,
+
+${inviterName} has invited you to join ${organizationName} on OVO as ${as}.
+
+Accept the invitation: ${link}
+
+It only takes a minute: enter your name, choose a password and you're in. The link works once and expires on ${until}.
+
+— The OVO team
+One Vision. One Organization.`
+  const html = simpleEmail({
+    heading: `Join ${escape(organizationName)} on OVO`,
+    body: `<strong>${escape(inviterName)}</strong> has invited you to join <strong>${escape(organizationName)}</strong> as ${as}. OVO is where the team keeps its clients, tasks, files and messages in one place.<br><br>It takes a minute: enter your name, choose a password and you’re in.`,
+    button: 'Accept invitation',
+    link,
+    footer: `This link works once and expires on ${escape(until)}. If you weren’t expecting it, you can ignore this email.`,
+  })
+  return { subject: `${inviterName} invited you to ${organizationName} on OVO`, text, html }
+}
+
+export function passwordResetEmail({ fullName, link }) {
+  const first = (fullName || 'there').split(' ')[0]
+  const text = `Hello ${first},
+
+Someone asked to reset your OVO password.
+
+Choose a new password: ${link}
+
+The link works once and expires in 1 hour. If you didn't ask for this, ignore this email; your password stays the same.
+
+— OVO`
+  const html = simpleEmail({
+    heading: 'Reset your password',
+    body: `Hello ${escape(first)}, click below to choose a new password for OVO.`,
+    button: 'Choose a new password',
+    link,
+    footer: 'The link works once and expires in 1 hour. If you didn’t ask for this, you can ignore this email — your password stays the same.',
+  })
+  return { subject: 'Reset your OVO password', text, html }
 }

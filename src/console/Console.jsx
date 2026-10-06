@@ -7,6 +7,7 @@ import {
   AccountSection, AddPartner, AuditSection, OverviewSection, PlansSection, SystemSection, UsersSection, WorkspacesSection,
 } from './Admin.jsx'
 import { AnnouncementsSection } from './Announcements.jsx'
+import { RevenueSection } from './Revenue.jsx'
 import './console.css'
 
 // A reset link arrives as /<private path>#reset=<token>; read it once and clear it from the address bar.
@@ -161,6 +162,7 @@ const SECTIONS = [
     { key: 'announcements', label: 'Announcements', icon: 'bell', tone: 'rose' },
   ] },
   { group: 'Business', items: [
+    { key: 'revenue', label: 'Revenue', icon: 'money', tone: 'green' },
     { key: 'plans', label: 'Plans & pricing', icon: 'billing', tone: 'amber' },
     { key: 'audit', label: 'Audit log', icon: 'list', tone: 'slate' },
   ] },
@@ -261,6 +263,7 @@ export function ConsoleApp({ account, onSignedOut }) {
             {section === 'partners' && <WorkspacesSection partnersOnly onAddPartner={addPartner} refreshKey={refreshKey} />}
             {section === 'users' && <UsersSection />}
             {section === 'announcements' && <AnnouncementsSection />}
+            {section === 'revenue' && <RevenueSection />}
             {section === 'plans' && <PlansSection />}
             {section === 'audit' && <AuditSection />}
             {section === 'account' && <AccountSection />}

@@ -7,13 +7,15 @@ import { api } from '../lib/api.js'
 import { capitalize } from '../lib/format.js'
 import { ADMIN_ROLES, AREAS, MANAGER_ROLES, WorkspaceContext, allowedViews, buildNavigation, readHash } from './context.js'
 import { industryFor, itemName } from '../../shared/industries.js'
-import { CreateMenu, SearchPalette } from './Command.jsx'
+import { AccountMenu, CreateMenu, SearchPalette } from './Command.jsx'
 import Sheets, { NewSheetModal } from './views/Sheets.jsx'
 import Sheet from './views/Sheet.jsx'
 import Forms from './views/Forms.jsx'
 import Automations from './views/Automations.jsx'
 import Updates, { UPDATE_CATEGORIES } from './views/Updates.jsx'
 import { PayModal } from './Pay.jsx'
+import { InviteModal } from './Invite.jsx'
+import Reports from './views/Reports.jsx'
 import Overview from './views/Overview.jsx'
 import Projects from './views/Projects.jsx'
 import Tasks from './views/Tasks.jsx'
@@ -31,7 +33,7 @@ import './ovo.css'
 const views = {
   overview: Overview, projects: Projects, tasks: Tasks, clients: Clients, campaigns: Campaigns,
   calendar: Calendar, files: Files, vault: Files, chat: Chat, notifications: Notifications,
-  billing: Billing, settings: Settings, sheets: Sheets, sheet: Sheet, forms: Forms, automations: Automations, updates: Updates,
+  billing: Billing, settings: Settings, sheets: Sheets, sheet: Sheet, forms: Forms, automations: Automations, updates: Updates, reports: Reports,
 }
 
 // Which store collections each record type touches, so a save refreshes only what changed.
@@ -70,6 +72,7 @@ function Workspace({ account, setAccount, onSignedOut }) {
   const [newSheet, setNewSheet] = useState(null)
   const [latestUpdate, setLatestUpdate] = useState(null)
   const [paying, setPaying] = useState(false)
+  const [inviting, setInviting] = useState(false)
   const industry = industryFor(account.organization.industry)
 
   const allowed = useMemo(() => allowedViews(role), [role])
@@ -130,7 +133,7 @@ function Workspace({ account, setAccount, onSignedOut }) {
       else failure = result.reason
     })
     setData((current) => ({ ...current, ...next }))
-    if (failure?.status === 401) onSignedOut()
+    if (failure?.status === 401) onSignedOut('expired')
     else if (failure) toast(failure.message, 'error')
   }, [role, toast, onSignedOut])
 
@@ -205,7 +208,7 @@ function Workspace({ account, setAccount, onSignedOut }) {
   }
 
   const context = {
-    account, setAccount, role, data, loaded, reload, navigate, params: route.params, search, setSearch, openPayment: () => setPaying(true),
+    account, setAccount, role, data, loaded, reload, navigate, params: route.params, search, setSearch, openPayment: () => setPaying(true), openInvite: () => setInviting(true),
     openForm, save, remove, patch, toast, confirm: setConfirm,
     isManager: MANAGER_ROLES.includes(role), isAdmin: ADMIN_ROLES.includes(role),
   }
@@ -233,9 +236,10 @@ function Workspace({ account, setAccount, onSignedOut }) {
       manager && { label: 'Automation', icon: 'bolt', tone: 'amber', onSelect: () => navigate('automations') },
     ].filter(Boolean) },
     { label: 'Share', items: [
+      ADMIN_ROLES.includes(role) && { label: 'Invite people', icon: 'team', tone: 'pink', onSelect: () => setInviting(true) },
       { label: 'Upload file', icon: 'upload', tone: 'sky', onSelect: () => navigate('files') },
       { label: 'Message', icon: 'chat', tone: 'violet', onSelect: () => navigate('chat') },
-    ] },
+    ].filter(Boolean) },
   ].filter((group) => group.items.length)
   const lookups = { clients: data.clients, projects: data.projects, members: data.members }
 
@@ -273,13 +277,18 @@ function Workspace({ account, setAccount, onSignedOut }) {
               </div>
             ))}
           </nav>
+          {ADMIN_ROLES.includes(role) && (
+            <button type="button" className="ws-invite" onClick={() => { setNavOpen(false); setInviting(true) }}>
+              <Icon name="plus" size={16} />Invite people
+            </button>
+          )}
           <div className="ws-user">
             <Avatar name={account.user.fullName} />
             <div>
               <strong>{account.user.fullName}</strong>
               <small>{capitalize(role)}</small>
             </div>
-            <IconButton icon="logout" label="Log out" onClick={logout} />
+            <button type="button" className="ws-logout" onClick={logout}><Icon name="logout" size={15} />Log out</button>
           </div>
         </aside>
         <button type="button" className="ws-scrim" aria-label="Close menu" onClick={() => setNavOpen(false)} />
@@ -309,7 +318,7 @@ function Workspace({ account, setAccount, onSignedOut }) {
                 <Icon name="bell" size={17} />
                 {unread > 0 && <span className="badge-dot" />}
               </a>
-              <a href="#/settings" className="ws-avatar-link" aria-label="Account settings"><Avatar name={account.user.fullName} size="sm" /></a>
+              <AccountMenu account={account} role={role} onInvite={() => setInviting(true)} onLogout={logout} />
             </div>
           </header>
           {account.passwordSet === false && view !== 'settings' && (
@@ -360,6 +369,7 @@ function Workspace({ account, setAccount, onSignedOut }) {
       {confirm && <Confirm {...confirm} onClose={() => setConfirm(null)} />}
       {searching && <SearchPalette onClose={() => setSearching(false)} />}
       {paying && <PayModal onClose={() => setPaying(false)} />}
+      {inviting && <InviteModal onClose={() => setInviting(false)} />}
       {newSheet !== null && <NewSheetModal initialTemplate={newSheet} onClose={() => setNewSheet(null)} />}
     </WorkspaceContext.Provider>
   )

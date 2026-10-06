@@ -15,6 +15,7 @@ export const AREAS = {
   clients: { label: 'Clients', icon: 'clients', tone: 'pink', roles: MANAGER_ROLES },
   projects: { label: 'Projects', icon: 'projects', tone: 'blue', roles: MANAGER_ROLES },
   tasks: { label: 'Tasks', icon: 'tasks', tone: 'green' },
+  reports: { label: 'Reports', icon: 'chart', tone: 'teal' },
   campaigns: { label: 'Campaigns', icon: 'campaigns', tone: 'orange', roles: MANAGER_ROLES },
   calendar: { label: 'Calendar', icon: 'calendar', tone: 'amber' },
   sheets: { label: 'Sheets', icon: 'sheet', tone: 'teal' },
@@ -43,7 +44,7 @@ export function buildNavigation(role, industry, sheets = []) {
     key: `sheet:${sheet.id}`, view: 'sheet', params: { id: sheet.id }, label: sheet.name, icon: sheet.icon, tone: sheet.color, count: sheet.rowCount,
   }))
   return [
-    { section: '', items: visible([area('overview'), ...industry.core.map(area), area('sheets'), area('forms'), area('automations')]) },
+    { section: '', items: visible([area('overview'), ...industry.core.map(area), area('reports'), area('sheets'), area('forms'), area('automations')]) },
     { section: industry.key === 'other' ? 'Modules' : industry.label, items: modules, module: true },
     { section: 'Collaborate', items: visible([area('chat'), area('files'), area('vault'), area('notifications')]) },
     { section: 'Company', items: visible([area('billing'), area('settings')]) },

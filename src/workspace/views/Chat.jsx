@@ -2,7 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import Icon from '../../components/Icon.jsx'
 import { Avatar, Button, Field, IconButton, Modal } from '../../components/ui.jsx'
 import { api } from '../../lib/api.js'
-import { formatTime } from '../../lib/format.js'
+import { formatBytes, formatTime } from '../../lib/format.js'
+import { downloadZip } from '../../lib/zip.js'
 import { useWorkspace } from '../context.js'
 
 const POLL_MS = 4000
@@ -90,6 +91,9 @@ function Chat() {
   const [sending, setSending] = useState(false)
   const [creating, setCreating] = useState(false)
   const [picking, setPicking] = useState(false)
+  const [attaching, setAttaching] = useState('')
+  const [zipping, setZipping] = useState('')
+  const fileInput = useRef(null)
   const scroller = useRef(null)
   const stickToBottom = useRef(true)
 
@@ -177,6 +181,57 @@ function Chat() {
     }
   }
 
+  // Sends a document into the conversation; any text typed goes with it as the caption.
+  async function attach(fileList) {
+    const file = fileList?.[0]
+    if (!file || !base) return
+    if (file.size > 4 * 1024 * 1024) { toast(`${file.name} is larger than 4 MB.`, 'error'); return }
+    setAttaching(`Sending ${file.name}…`)
+    try {
+      const response = await fetch(`${base}/attachments`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'X-File-Name': encodeURIComponent(file.name),
+          'X-File-Type': file.type || 'application/octet-stream',
+          'X-Caption': encodeURIComponent(draft.trim()),
+        },
+        body: file,
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(result.error || 'The file couldn’t be sent.')
+      stickToBottom.current = true
+      setMessages((current) => [...current, result.message])
+      setDraft('')
+      if (active.kind === 'dm') loadConversations().catch(() => {})
+    } catch (error) {
+      toast(error.message, 'error')
+    } finally {
+      setAttaching('')
+      if (fileInput.current) fileInput.current.value = ''
+    }
+  }
+
+  // Every document shared in this conversation, as one ZIP.
+  async function downloadAll() {
+    try {
+      const { attachments } = await api(`${base}/attachments`)
+      if (!attachments.length) { toast('No documents have been shared here yet.'); return }
+      setZipping(`0 of ${attachments.length}…`)
+      const count = await downloadZip(
+        attachments.map((item) => ({ name: item.name, url: `/api/chat/attachments/${item.id}/download` })),
+        `${title} - shared documents`,
+        (done, total) => setZipping(`${done} of ${total}…`),
+      )
+      toast(`Downloaded ${count} ${count === 1 ? 'document' : 'documents'} as a ZIP`)
+    } catch (error) {
+      toast(error.message, 'error')
+    } finally {
+      setZipping('')
+    }
+  }
+
   function deleteChannel(item) {
     confirm({
       title: `Delete #${item.name}?`,
@@ -250,7 +305,10 @@ function Chat() {
             {channel?.description && <p>{channel.description}</p>}
             {conversation && <p><Icon name="vault" size={12} /> Private — only you and {conversation.userName.split(' ')[0]} can see this conversation.</p>}
           </div>
-          {isManager && channel && channel.name !== 'general' && <IconButton icon="trash" label={`Delete #${channel.name}`} onClick={() => deleteChannel(channel)} />}
+          <div className="chat-head-actions">
+            {(channel || conversation) && <Button size="sm" icon="download" onClick={downloadAll} disabled={Boolean(zipping)}>{zipping ? `Preparing ${zipping}` : 'Download all files'}</Button>}
+            {isManager && channel && channel.name !== 'general' && <IconButton icon="trash" label={`Delete #${channel.name}`} onClick={() => deleteChannel(channel)} />}
+          </div>
         </header>
         <div
           className="chat-messages"
@@ -276,7 +334,14 @@ function Chat() {
                   {grouped ? <span className="message-gutter">{formatTime(message.createdAt)}</span> : <Avatar name={message.userName || 'Former member'} size="sm" />}
                   <div>
                     {!grouped && <div className="message-meta"><strong>{message.userName || 'Former member'}</strong><span>{formatTime(message.createdAt)}</span></div>}
-                    <p>{message.body}</p>
+                    {!(message.attachment && message.body === `Shared ${message.attachment.name}`) && <p>{message.body}</p>}
+                    {message.attachment && (
+                      <a className="chat-file" href={`/api/chat/attachments/${message.attachment.id}/download`} download>
+                        <span className="chat-file-icon"><Icon name="files" size={18} /></span>
+                        <span><strong>{message.attachment.name}</strong><small>{formatBytes(message.attachment.sizeBytes)} · Download</small></span>
+                        <Icon name="download" size={16} />
+                      </a>
+                    )}
                   </div>
                 </div>
               </div>
@@ -287,6 +352,10 @@ function Chat() {
           <div className="composer composer-closed">{conversation.userName} is no longer in this workspace.</div>
         ) : (
           <form className="composer" onSubmit={send}>
+            <input ref={fileInput} type="file" hidden onChange={(event) => attach(event.target.files)} />
+            <button type="button" className="btn btn-icon composer-attach" onClick={() => fileInput.current?.click()} disabled={!active || Boolean(attaching)} aria-label="Attach a document" title="Attach a document (up to 4 MB)">
+              {attaching ? <span className="spinner" /> : <Icon name="upload" size={17} />}
+            </button>
             <textarea
               value={draft}
               onChange={(event) => setDraft(event.target.value)}

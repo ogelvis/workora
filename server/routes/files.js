@@ -2,7 +2,7 @@ import express from 'express'
 import { z } from 'zod'
 import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
-import { ADMINS, HttpError, getSubscription, logActivity, route, withTransaction } from '../lib.js'
+import { ADMINS, HttpError, MANAGERS, getSubscription, logActivity, route, withTransaction } from '../lib.js'
 import { formatStorage } from '../format.js'
 
 const router = express.Router()
@@ -30,6 +30,51 @@ function scope(request, vault) {
   }
 }
 
+// Built-in folders plus any the business added itself (and any older folder that still holds files).
+async function folderNames(db, organizationId, vault) {
+  const custom = await db.query(
+    'SELECT name FROM file_folders WHERE organization_id = $1 AND vault = $2 ORDER BY created_at',
+    [organizationId, vault],
+  )
+  const names = [...(vault ? VAULT_FOLDERS : FOLDERS), ...custom.rows.map((row) => row.name)]
+  return { names, custom: new Set(custom.rows.map((row) => row.name)) }
+}
+
+// Storage counts both shared files and documents sent in chat.
+export async function storageUsed(db, organizationId) {
+  const result = await db.query(
+    `SELECT (SELECT COALESCE(sum(size_bytes), 0) FROM files WHERE organization_id = $1)
+          + (SELECT COALESCE(sum(size_bytes), 0) FROM chat_attachments WHERE organization_id = $1) AS used`,
+    [organizationId],
+  )
+  return Number(result.rows[0].used)
+}
+
+// Checks a new upload against the plan's storage; call inside a transaction holding the subscription lock.
+export async function assertStorage(client, organizationId, size) {
+  const subscription = await getSubscription(client, organizationId, { lock: true })
+  const usedBytes = await storageUsed(client, organizationId)
+  const limit = subscription ? Number(subscription.storage_limit_bytes) : 0
+  if (usedBytes >= limit) {
+    throw new HttpError(413, `Your storage is full: ${formatStorage(usedBytes)} of ${formatStorage(limit)} used. Delete files or upgrade your plan to upload more.`)
+  }
+  if (usedBytes + size > limit) {
+    throw new HttpError(413, `Not enough space for this file. ${formatStorage(limit - usedBytes)} is left on your plan and the file is ${formatStorage(size)}.`)
+  }
+}
+
+// Reads the name and type a client sends with a raw upload.
+export function uploadedName(request) {
+  let name
+  try {
+    name = decodeURIComponent(request.get('x-file-name') || '').trim()
+  } catch {
+    name = ''
+  }
+  // eslint-disable-next-line no-control-regex -- strip path separators and control characters
+  return name.replace(/[\\/\u0000-\u001f]/g, '_').slice(0, 255)
+}
+
 const fileColumns = `f.id, f.name, f.folder, f.vault, f.mime_type AS "mimeType", f.size_bytes::float AS "sizeBytes",
                      f.created_at AS "createdAt", f.uploaded_by AS "uploadedById", u.full_name AS "uploadedBy"`
 
@@ -49,17 +94,21 @@ router.get('/files', route(async (request, response) => {
      WHERE organization_id = $1 AND vault = $2 GROUP BY folder`,
     [request.auth.organizationId, vault],
   )
-  const [usage, subscription] = await Promise.all([
-    pool.query('SELECT COALESCE(sum(size_bytes), 0)::float AS used FROM files WHERE organization_id = $1', [request.auth.organizationId]),
+  const known = await folderNames(pool, request.auth.organizationId, vault)
+  const names = [...known.names, ...folders.rows.map((row) => row.folder).filter((name) => !known.names.includes(name))]
+  const [usedBytes, subscription] = await Promise.all([
+    storageUsed(pool, request.auth.organizationId),
     getSubscription(pool, request.auth.organizationId),
   ])
   return response.json({
-    storage: { usedBytes: usage.rows[0].used, limitBytes: subscription ? Number(subscription.storage_limit_bytes) : 0 },
+    storage: { usedBytes, limitBytes: subscription ? Number(subscription.storage_limit_bytes) : 0 },
     files: result.rows,
-    folders: (vault ? VAULT_FOLDERS : FOLDERS).map((name) => ({
+    folders: names.map((name) => ({
       name,
       count: folders.rows.find((row) => row.folder === name)?.count || 0,
+      custom: known.custom.has(name),
     })),
+    canManageFolders: vault ? canUseVault(request.auth.role) : MANAGERS.includes(request.auth.role),
     maxFileBytes: MAX_FILE_BYTES,
   })
 }))
@@ -72,16 +121,9 @@ router.post(
   route(async (request, response) => {
     const vault = request.query.vault === '1'
     scope(request, vault)
-    const folders = vault ? VAULT_FOLDERS : FOLDERS
-    const folder = folders.includes(request.query.folder) ? request.query.folder : folders[folders.length - 1]
-    let name
-    try {
-      name = decodeURIComponent(request.get('x-file-name') || '').trim()
-    } catch {
-      name = ''
-    }
-    // eslint-disable-next-line no-control-regex -- strip path separators and control characters
-    name = name.replace(/[\\/\u0000-\u001f]/g, '_').slice(0, 255)
+    const { names: folders } = await folderNames(pool, request.auth.organizationId, vault)
+    const folder = folders.includes(request.query.folder) ? request.query.folder : (vault ? VAULT_FOLDERS : FOLDERS).at(-1)
+    const name = uploadedName(request)
     const mimeType = (request.get('x-file-type') || 'application/octet-stream').slice(0, 120)
     if (!name) return response.status(400).json({ error: 'Choose a file with a name.' })
     if (!Buffer.isBuffer(request.body) || !request.body.length) {
@@ -90,21 +132,8 @@ router.post(
     const size = request.body.length
 
     const file = await withTransaction(async (client) => {
-      const subscription = await getSubscription(client, request.auth.organizationId, { lock: true })
-      const used = await client.query(
-        'SELECT COALESCE(sum(size_bytes), 0)::float AS used FROM files WHERE organization_id = $1',
-        [request.auth.organizationId],
-      )
-      // The plan's limit is a hard ceiling: a workspace without a plan has no storage, and
-      // the subscription row lock above serialises concurrent uploads so they cannot overshoot.
-      const limit = subscription ? Number(subscription.storage_limit_bytes) : 0
-      const usedBytes = used.rows[0].used
-      if (usedBytes >= limit) {
-        throw new HttpError(413, `Your storage is full: ${formatStorage(usedBytes)} of ${formatStorage(limit)} used. Delete files or upgrade your plan to upload more.`)
-      }
-      if (usedBytes + size > limit) {
-        throw new HttpError(413, `Not enough space for this file. ${formatStorage(limit - usedBytes)} is left on your plan and the file is ${formatStorage(size)}.`)
-      }
+      // The subscription row lock inside assertStorage serialises uploads so they cannot overshoot.
+      await assertStorage(client, request.auth.organizationId, size)
       const inserted = await client.query(
         `INSERT INTO files (organization_id, folder, vault, name, mime_type, size_bytes, data, uploaded_by)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
@@ -120,6 +149,51 @@ router.post(
     return response.status(201).json({ file })
   }),
 )
+
+// ---------------------------------------------------------------- Folders
+const folderSchema = z.object({
+  name: z.string().trim().min(1, 'Name the folder.').max(60).regex(/^[^/\\<>]+$/, 'Folder names can’t contain / \\ < or >.'),
+  vault: z.boolean().optional().default(false),
+})
+
+function canManageFolders(role, vault) {
+  return vault ? canUseVault(role) : MANAGERS.includes(role)
+}
+
+router.post('/files/folders', route(async (request, response) => {
+  const values = folderSchema.parse(request.body)
+  scope(request, values.vault)
+  if (!canManageFolders(request.auth.role, values.vault)) throw new HttpError(403, 'Only owners, admins and managers can add folders.')
+  const { names } = await folderNames(pool, request.auth.organizationId, values.vault)
+  if (names.some((name) => name.toLowerCase() === values.name.toLowerCase())) throw new HttpError(409, 'A folder with that name already exists.')
+  const count = await pool.query('SELECT count(*)::int AS count FROM file_folders WHERE organization_id = $1', [request.auth.organizationId])
+  if (count.rows[0].count >= 100) throw new HttpError(400, 'A workspace can have up to 100 extra folders.')
+  await pool.query(
+    'INSERT INTO file_folders (organization_id, vault, name, created_by) VALUES ($1, $2, $3, $4)',
+    [request.auth.organizationId, values.vault, values.name, request.auth.userId],
+  )
+  await logActivity(pool, request.auth, values.vault ? 'added a vault folder' : 'added a folder', 'folder', values.name)
+  return response.status(201).json({ folder: { name: values.name, count: 0, custom: true } })
+}))
+
+// Only folders the business added can be deleted, and only once they're empty.
+router.delete('/files/folders', route(async (request, response) => {
+  const values = folderSchema.parse({ name: request.query.name, vault: request.query.vault === '1' })
+  scope(request, values.vault)
+  if (!canManageFolders(request.auth.role, values.vault)) throw new HttpError(403, 'Only owners, admins and managers can delete folders.')
+  const used = await pool.query(
+    'SELECT count(*)::int AS count FROM files WHERE organization_id = $1 AND vault = $2 AND folder = $3',
+    [request.auth.organizationId, values.vault, values.name],
+  )
+  if (used.rows[0].count) throw new HttpError(409, `Move or delete the ${used.rows[0].count} ${used.rows[0].count === 1 ? 'file' : 'files'} in “${values.name}” first.`)
+  const result = await pool.query(
+    'DELETE FROM file_folders WHERE organization_id = $1 AND vault = $2 AND name = $3 RETURNING name',
+    [request.auth.organizationId, values.vault, values.name],
+  )
+  if (!result.rowCount) throw new HttpError(404, 'Only folders you added can be deleted.')
+  await logActivity(pool, request.auth, 'deleted a folder', 'folder', values.name)
+  return response.status(204).end()
+}))
 
 async function findFile(request, withData) {
   const result = await pool.query(

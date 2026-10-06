@@ -225,7 +225,8 @@ const projectSelect = `
   SELECT p.id, p.name, p.description, p.status, p.due_date AS "dueDate", p.created_at AS "createdAt",
          p.client_id AS "clientId", c.name AS "clientName",
          (SELECT count(*)::int FROM tasks t WHERE t.project_id = p.id) AS "taskCount",
-         (SELECT count(*)::int FROM tasks t WHERE t.project_id = p.id AND t.status = 'Completed') AS "completedTaskCount"
+         (SELECT count(*)::int FROM tasks t WHERE t.project_id = p.id AND t.status = 'Completed') AS "completedTaskCount",
+         (SELECT COALESCE(round(avg(t.progress))::int, 0) FROM tasks t WHERE t.project_id = p.id) AS progress
   FROM projects p
   LEFT JOIN clients c ON c.id = p.client_id AND c.organization_id = p.organization_id`
 
@@ -296,7 +297,8 @@ router.delete('/projects/:id', managersOnly, route(async (request, response) => 
 // ---------------------------------------------------------------- Tasks
 
 const taskSelect = `
-  SELECT t.id, t.title, t.description, t.status, t.priority, t.due_date AS "dueDate",
+  SELECT t.id, t.title, t.description, t.status, t.priority, t.due_date AS "dueDate", t.progress,
+         (SELECT max(tu.created_at) FROM task_updates tu WHERE tu.task_id = t.id) AS "lastUpdateAt",
          t.project_id AS "projectId", p.name AS "projectName",
          t.assignee_id AS "assigneeId", u.full_name AS "assigneeName",
          t.created_by AS "createdBy", t.created_at AS "createdAt"
@@ -358,7 +360,8 @@ router.put('/tasks/:id', managersOnly, route(async (request, response) => {
     await assertMember(client, values.assigneeId, request.auth.organizationId)
     await client.query(
       `UPDATE tasks SET title = $1, description = $2, priority = $3, status = COALESCE($4, status),
-              due_date = $5, project_id = $6, assignee_id = $7
+              due_date = $5, project_id = $6, assignee_id = $7,
+              progress = CASE WHEN COALESCE($4, status) = 'Completed' THEN 100 ELSE progress END
        WHERE id = $8`,
       [values.title, values.description || '', values.priority || 'Medium', values.status || null, values.dueDate || null, values.projectId || null, values.assigneeId || null, request.params.id],
     )
@@ -381,7 +384,7 @@ router.patch('/tasks/:id', route(async (request, response) => {
     const prior = await client.query('SELECT status FROM tasks WHERE id = $1 AND organization_id = $2 FOR UPDATE', [request.params.id, request.auth.organizationId])
     wasCompleted = prior.rows[0]?.status === 'Completed'
     const updated = await client.query(
-      `UPDATE tasks SET status = $1
+      `UPDATE tasks SET status = $1, progress = CASE WHEN $1 = 'Completed' THEN 100 ELSE progress END
        WHERE id = $2 AND organization_id = $3 AND ($4 OR assignee_id = $5)
        RETURNING id`,
       [values.status, request.params.id, request.auth.organizationId, MANAGERS.includes(request.auth.role), request.auth.userId],

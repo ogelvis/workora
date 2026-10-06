@@ -158,6 +158,7 @@ function Main() {
   const [welcoming, setWelcoming] = useState(linkToken?.mode === 'welcome')
   const [screen, setScreen] = useState(linkToken || emailChange ? 'auth' : 'landing')
   const [authMode, setAuthMode] = useState(linkToken && linkToken.mode !== 'welcome' ? linkToken.mode : 'login')
+  const [authNotice, setAuthNotice] = useState('')
 
   useEffect(() => {
     if (linkToken) {
@@ -188,10 +189,11 @@ function Main() {
     setAccount(await api('/api/auth/me'))
   }, [])
 
-  const signedOut = useCallback(() => {
+  const signedOut = useCallback((reason) => {
     // Leaving the console returns to the private sign-in; leaving a workspace to the login page.
     const fromConsole = Boolean(account?.platformAdmin)
     setAccount(null)
+    setAuthNotice(fromConsole ? '' : reason === 'expired' ? 'Your session ended. Please sign in again.' : 'You’ve logged out. See you soon!')
     setAuthMode('login')
     setScreen(fromConsole ? 'landing' : 'auth')
     window.history.replaceState(null, '', fromConsole ? window.location.pathname : '/')
@@ -233,7 +235,7 @@ function Main() {
           mode={authMode}
           setMode={setAuthMode}
           token={linkToken?.token}
-          initialNotice={emailChange?.notice}
+          initialNotice={emailChange?.notice || authNotice}
           initialError={emailChange?.error}
           onAuthenticated={authenticated}
           onBack={() => setScreen('landing')}
