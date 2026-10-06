@@ -272,8 +272,22 @@ function MyWeekly() {
   )
 }
 
+// Team reports are on paid plans; the Free plan sees what they'd get.
+function UpgradeReports() {
+  const { role, openPayment } = useWorkspace()
+  return (
+    <section className="card upgrade-card">
+      <span className="empty-icon"><Icon name="chart" size={22} /></span>
+      <h2>See your whole team’s progress</h2>
+      <p>Daily updates and weekly reports from everyone, in one place, are part of the Business plan. Your team can still post progress on their tasks and write their own weekly report.</p>
+      {['owner', 'admin'].includes(role) ? <Button variant="primary" icon="shield" onClick={openPayment}>Upgrade plan</Button> : <p>Ask your workspace owner to upgrade.</p>}
+    </section>
+  )
+}
+
 function Reports() {
-  const { isManager, params, navigate } = useWorkspace()
+  const { isManager, params, navigate, account } = useWorkspace()
+  const locked = account.subscription?.features?.reports === false
   const tabs = isManager ? ['daily', 'weekly', 'mine'] : ['mine']
   const tab = tabs.includes(params.tab) ? params.tab : tabs[0]
   return (
@@ -287,8 +301,8 @@ function Reports() {
           { value: 'mine', label: 'My weekly report', icon: 'edit' },
         ]} /></div>
       )}
-      {tab === 'daily' && <Daily />}
-      {tab === 'weekly' && <TeamWeekly />}
+      {tab === 'daily' && (locked ? <UpgradeReports /> : <Daily />)}
+      {tab === 'weekly' && (locked ? <UpgradeReports /> : <TeamWeekly />)}
       {tab === 'mine' && <MyWeekly />}
     </div>
   )

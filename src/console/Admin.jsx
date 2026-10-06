@@ -650,6 +650,7 @@ function PlanCard({ plan, onSaved }) {
   const { toast } = useWorkspace()
   const [busy, setBusy] = useState(false)
   const unlimitedUsers = plan.userLimit >= 2147483647
+  const features = plan.features || {}
 
   async function submit(event) {
     event.preventDefault()
@@ -666,6 +667,14 @@ function PlanCard({ plan, onSaved }) {
           yearlyPrice: values.yearlyPrice === '' ? null : Number(values.yearlyPrice),
           currency: values.currency,
           active: values.active === 'on',
+          includedUsers: Number(values.includedUsers),
+          extraUserPrice: values.extraUserPrice === '' ? null : Number(values.extraUserPrice),
+          features: {
+            forms: values.forms === '' ? null : Number(values.forms),
+            automations: values.automations === '' ? null : Number(values.automations),
+            reports: values.reports === 'on',
+            chatHistoryDays: values.chatHistoryDays === '' ? null : Number(values.chatHistoryDays),
+          },
         },
       })
       toast(`${plan.name} plan saved`)
@@ -688,14 +697,23 @@ function PlanCard({ plan, onSaved }) {
         <Field label="Yearly price"><input name="yearlyPrice" type="number" min="0" step="1" defaultValue={plan.yearlyPrice ?? ''} /></Field>
         <Field label="Currency"><input name="currency" maxLength={3} defaultValue={plan.currency} /></Field>
         <Field label="Storage (GB)"><input name="storageLimitGb" type="number" min="0.1" step="0.1" defaultValue={Math.round((plan.storageLimitBytes / 1024 ** 3) * 10) / 10} /></Field>
-        <Field label="Member limit">
+        <Field label="People included" hint="Covered by the plan price"><input name="includedUsers" type="number" min="1" required defaultValue={plan.includedUsers ?? plan.userLimit} /></Field>
+        <Field label="Price per extra person / month" hint="Empty = can’t add people"><input name="extraUserPrice" type="number" min="0" step="1" defaultValue={plan.extraUserPrice ?? ''} /></Field>
+        <Field label="Maximum people" hint="Including extra people">
           <input name="userLimit" type="number" min="1" defaultValue={unlimitedUsers ? 1000 : plan.userLimit} />
         </Field>
         <Field label="Project limit" hint="Empty = unlimited"><input name="projectLimit" type="number" min="1" defaultValue={plan.projectLimit ?? ''} /></Field>
         <label className="toggle field-wide"><input type="checkbox" name="unlimitedUsers" defaultChecked={unlimitedUsers} /> Unlimited members</label>
+        <Field label="Forms" hint="Empty = unlimited"><input name="forms" type="number" min="0" defaultValue={features.forms ?? ''} /></Field>
+        <Field label="Automations" hint="Empty = unlimited"><input name="automations" type="number" min="0" defaultValue={features.automations ?? ''} /></Field>
+        <Field label="Chat history (days)" hint="Empty = keep everything"><input name="chatHistoryDays" type="number" min="1" defaultValue={features.chatHistoryDays ?? ''} /></Field>
+        <label className="toggle"><input type="checkbox" name="reports" defaultChecked={features.reports !== false} /> Team reports</label>
       </fieldset>
       <div className="card-foot">
-        <span className="plan-preview">{plan.monthlyPrice !== null ? `${formatPrice(plan.monthlyPrice, plan.currency)} / month` : 'Shown as “Contact us”'}</span>
+        <span className="plan-preview">
+          {plan.monthlyPrice !== null ? `${formatPrice(plan.monthlyPrice, plan.currency)} / month · ${plan.includedUsers ?? plan.userLimit} people` : 'Shown as “Contact us”'}
+          {plan.extraUserPrice ? ` · +${formatPrice(plan.extraUserPrice, plan.currency)} per extra person` : ''}
+        </span>
         <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save plan'}</button>
       </div>
     </form>
@@ -835,6 +853,30 @@ function Check({ ok, warn, title, children }) {
   )
 }
 
+// Moves files that were stored in the database into Cloudflare R2, in batches.
+function MoveToR2({ remaining, onDone }) {
+  const { toast } = useWorkspace()
+  const [progress, setProgress] = useState('')
+  async function move() {
+    let moved = 0
+    try {
+      for (;;) {
+        setProgress(`Moving… ${moved} done`)
+        const result = await api('/api/admin/storage/migrate', { method: 'POST' })
+        moved += result.moved
+        if (!result.remaining.count || !result.moved) break
+      }
+      toast(`${moved} ${moved === 1 ? 'file' : 'files'} moved to R2`)
+    } catch (error) {
+      toast(error.message, 'error')
+    } finally {
+      setProgress('')
+      onDone()
+    }
+  }
+  return <Button size="sm" icon="upload" onClick={move} disabled={Boolean(progress)}>{progress || `Move ${remaining} ${remaining === 1 ? 'file' : 'files'} to R2`}</Button>
+}
+
 export function SystemSection() {
   const { data, error, reload } = useLoad(() => api('/api/admin/system'), [])
   return (
@@ -853,6 +895,14 @@ export function SystemSection() {
             {data.email.configured
               ? <>Sending through {data.email.provider} as <b>{data.email.from || 'EMAIL_FROM not set'}</b>. Partner welcome links and password resets are emailed automatically.</>
               : <>Not set up. Partner links show in the console for you to send by hand, and password recovery needs the command line. Add <code>RESEND_API_KEY</code> and <code>EMAIL_FROM</code> in Vercel, then redeploy.</>}
+          </Check>
+          <Check ok={data.storage?.r2 && !data.storage.inDatabase.count} warn title="File storage (Cloudflare R2)">
+            {!data.storage?.r2
+              ? <>Not set up. Files are kept in the database, up to 4 MB each. Add <code>R2_ACCOUNT_ID</code>, <code>R2_ACCESS_KEY_ID</code>, <code>R2_SECRET_ACCESS_KEY</code> and <code>R2_BUCKET</code> in Vercel, then redeploy.</>
+              : data.storage.inDatabase.count
+                ? <>Connected to bucket <b>{data.storage.bucket}</b>. {data.storage.inDatabase.count} older {data.storage.inDatabase.count === 1 ? 'file' : 'files'} ({formatBytes(data.storage.inDatabase.bytes)}) still sit in the database.{' '}
+                  <MoveToR2 remaining={data.storage.inDatabase.count} onDone={reload} /></>
+                : <>Connected to bucket <b>{data.storage.bucket}</b>. Files up to 100 MB go straight to R2.</>}
           </Check>
           <Check ok={data.payments?.paystack && data.payments.mode === 'live'} warn title="Online payments (Paystack)">
             {!data.payments?.paystack

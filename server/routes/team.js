@@ -10,6 +10,15 @@ import {
   validationError, withTransaction,
 } from '../lib.js'
 
+// Explains what to do when a workspace has no room for another person.
+export function seatLimitMessage(subscription) {
+  const limit = `Your ${subscription.plan_name} plan has room for ${subscription.memberLimit} ${subscription.memberLimit === 1 ? 'person' : 'people'}, counting pending invitations.`
+  if (subscription.status === 'active' && subscription.extra_user_price && subscription.memberLimit < subscription.user_limit) {
+    return `${limit} Add more people from Billing.`
+  }
+  return `${limit} Upgrade your plan in Billing to add more.`
+}
+
 const router = express.Router()
 router.use(requireAuth)
 const adminsOnly = requireRole(...ADMINS)
@@ -170,8 +179,8 @@ router.post('/invitations', adminsOnly, route(async (request, response) => {
       [request.auth.organizationId, email],
     )
     const { members, pending } = counts.rows[0]
-    if (subscription && members + pending >= subscription.user_limit) {
-      throw new HttpError(409, `The ${subscription.plan_name} plan includes ${subscription.user_limit} members, including pending invitations.`)
+    if (subscription && members + pending >= subscription.memberLimit) {
+      throw new HttpError(409, seatLimitMessage(subscription))
     }
     const existing = await client.query(
       `SELECT 1 FROM users u JOIN organization_members om ON om.user_id = u.id WHERE u.email = $1`,
@@ -244,14 +253,16 @@ router.get('/billing', adminsOnly, route(async (request, response) => {
     getSubscription(pool, organizationId),
     pool.query(
       `SELECT name, user_limit AS "userLimit", storage_limit_bytes::float AS "storageLimitBytes", project_limit AS "projectLimit",
-              monthly_price::float AS "monthlyPrice", yearly_price::float AS "yearlyPrice", currency
+              monthly_price::float AS "monthlyPrice", yearly_price::float AS "yearlyPrice", currency,
+              COALESCE(included_users, user_limit) AS "includedUsers", extra_user_price::float AS "extraUserPrice", features
        FROM subscription_plans WHERE active ORDER BY sort_order, user_limit`,
     ),
     pool.query(
       `SELECT (SELECT count(*)::int FROM organization_members WHERE organization_id = $1) AS members,
               (SELECT count(*)::int FROM invitations WHERE organization_id = $1 AND accepted_at IS NULL AND expires_at > now()) AS "pendingInvites",
               (SELECT count(*)::int FROM projects WHERE organization_id = $1) AS projects,
-              (SELECT COALESCE(sum(size_bytes), 0)::float FROM files WHERE organization_id = $1) AS "storageBytes"`,
+              ((SELECT COALESCE(sum(size_bytes), 0) FROM files WHERE organization_id = $1)
+               + (SELECT COALESCE(sum(size_bytes), 0) FROM chat_attachments WHERE organization_id = $1))::float AS "storageBytes"`,
       [organizationId],
     ),
   ])
@@ -261,7 +272,15 @@ router.get('/billing', adminsOnly, route(async (request, response) => {
       status: subscription.status,
       trialEndsAt: subscription.trial_ends_at,
       trialExpired: subscription.trialExpired,
-      userLimit: subscription.user_limit,
+      userLimit: subscription.memberLimit,
+      maxUsers: subscription.user_limit,
+      includedUsers: subscription.included_users ?? subscription.user_limit,
+      seats: subscription.seats,
+      extraUserPrice: subscription.extra_user_price,
+      monthlyPrice: subscription.monthly_price,
+      yearlyPrice: subscription.yearly_price,
+      currency: subscription.currency,
+      features: subscription.features,
       storageLimitBytes: Number(subscription.storage_limit_bytes),
       projectLimit: subscription.project_limit,
       currentPeriodEnd: subscription.current_period_end,

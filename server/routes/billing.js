@@ -4,7 +4,7 @@ import rateLimit from 'express-rate-limit'
 import { z } from 'zod'
 import { pool } from '../db.js'
 import { requireAuth, requireRole } from '../auth.js'
-import { HttpError, appUrl, logActivity, notify, route, withTransaction } from '../lib.js'
+import { HttpError, appUrl, getSubscription, logActivity, notify, route, withTransaction } from '../lib.js'
 
 // Paystack checkout: the workspace pays on Paystack's page, and OVO activates the plan
 // only after confirming the payment with Paystack itself (callback, plus webhook as a backup).
@@ -27,7 +27,7 @@ async function paystack(path, options = {}) {
   return body.data
 }
 
-const paymentColumns = `id, reference, plan_name AS "plan", billing_interval AS "interval", amount_minor::float / 100 AS amount,
+const paymentColumns = `id, reference, plan_name AS "plan", billing_interval AS "interval", amount_minor::float / 100 AS amount, seats, purpose,
   currency, status, channel, paid_at AS "paidAt", period_end AS "periodEnd", created_at AS "createdAt"`
 
 // Confirms a payment with Paystack and, the first time it succeeds, activates the plan.
@@ -50,15 +50,29 @@ export async function confirmPayment(reference) {
     }
     const plan = await client.query('SELECT id FROM subscription_plans WHERE name = $1', [payment.plan_name])
     if (!plan.rowCount) throw new Error(`Paid plan ${payment.plan_name} no longer exists`)
+    // Extra people bought mid-period: more room, same end date.
+    if (payment.purpose === 'seats') {
+      const updated = await client.query(
+        'UPDATE subscriptions SET seats = GREATEST(COALESCE(seats, 0), $2) WHERE organization_id = $1 RETURNING current_period_end',
+        [payment.organization_id, payment.seats],
+      )
+      const periodEnd = updated.rows[0]?.current_period_end
+      await client.query(
+        "UPDATE payments SET status = 'success', channel = $2, paid_at = COALESCE($3::timestamptz, now()), period_end = $4 WHERE id = $1",
+        [payment.id, data.channel || null, data.paid_at || null, periodEnd],
+      )
+      if (payment.created_by) await logActivity(client, { organizationId: payment.organization_id, userId: payment.created_by }, `added room for ${payment.seats} people`, 'billing', payment.reference)
+      return { status: 'success', payment: { ...payment, period_end: periodEnd } }
+    }
     // A renewal adds time after the current paid period; an upgrade or lapsed plan starts today.
     const step = payment.billing_interval === 'yearly' ? '1 year' : '1 month'
     const updated = await client.query(
       `UPDATE subscriptions SET
          current_period_end = CASE WHEN plan_id = $2 AND status = 'active' AND current_period_end > now()
                                    THEN current_period_end ELSE now() END + $3::interval,
-         plan_id = $2, status = 'active'
+         plan_id = $2, status = 'active', seats = $4
        WHERE organization_id = $1 RETURNING current_period_end`,
-      [payment.organization_id, plan.rows[0].id, step],
+      [payment.organization_id, plan.rows[0].id, step, payment.seats],
     )
     const periodEnd = updated.rows[0]?.current_period_end
     await client.query(
@@ -119,45 +133,116 @@ const router = express.Router()
 router.use(requireAuth)
 const adminsOnly = requireRole('owner', 'admin')
 
-router.post('/billing/checkout', adminsOnly, route(async (request, response) => {
-  if (!paystackEnabled()) throw new HttpError(400, 'Online payment isn’t set up yet. Contact OVO to upgrade.')
-  const values = z.object({ plan: z.string().trim().min(1).max(60), interval: z.enum(['monthly', 'yearly']) }).parse(request.body)
-  const plan = await pool.query(
-    'SELECT name, monthly_price::float AS monthly, yearly_price::float AS yearly, currency FROM subscription_plans WHERE name = $1 AND active',
-    [values.plan],
+// The price of a plan for a number of people: the base price covers the plan's included people,
+// each extra person costs extra_user_price a month (yearly is 10 months, so 2 are free).
+export function planAmount(plan, interval, seats) {
+  const base = interval === 'yearly' ? plan.yearly : plan.monthly
+  const extra = Math.max(0, seats - plan.included) * (plan.extraUserPrice || 0) * (interval === 'yearly' ? 10 : 1)
+  return base + extra
+}
+
+const planRow = async (name) => (await pool.query(
+  `SELECT name, monthly_price::float AS monthly, yearly_price::float AS yearly, currency, user_limit AS "userLimit",
+          COALESCE(included_users, user_limit) AS included, extra_user_price::float AS "extraUserPrice"
+   FROM subscription_plans WHERE name = $1 AND active`,
+  [name],
+)).rows[0]
+
+async function headcount(organizationId) {
+  const result = await pool.query(
+    `SELECT (SELECT count(*)::int FROM organization_members WHERE organization_id = $1)
+          + (SELECT count(*)::int FROM invitations WHERE organization_id = $1 AND accepted_at IS NULL AND expires_at > now()) AS people`,
+    [organizationId],
   )
-  const row = plan.rows[0]
-  if (!row) throw new HttpError(404, 'That plan isn’t available.')
-  const price = values.interval === 'yearly' ? row.yearly : row.monthly
-  if (!price) throw new HttpError(400, `The ${row.name} plan has custom pricing. Contact OVO to arrange it.`)
-  const amountMinor = Math.round(price * 100)
+  return result.rows[0].people
+}
+
+async function startCheckout(request, { plan, interval, seats, purpose, amount }) {
+  const amountMinor = Math.round(amount * 100)
   const reference = `ovo_${randomBytes(12).toString('base64url')}`
   await pool.query(
-    `INSERT INTO payments (organization_id, reference, plan_name, billing_interval, amount_minor, currency, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [request.auth.organizationId, reference, row.name, values.interval, amountMinor, row.currency, request.auth.userId],
+    `INSERT INTO payments (organization_id, reference, plan_name, billing_interval, amount_minor, currency, created_by, seats, purpose)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [request.auth.organizationId, reference, plan.name, interval, amountMinor, plan.currency, request.auth.userId, seats, purpose],
   )
+  const label = purpose === 'seats' ? `${plan.name} — room for ${seats} people` : `${plan.name} (${interval}, ${seats} people)`
   const data = await paystack('/transaction/initialize', {
     method: 'POST',
     body: JSON.stringify({
       email: request.auth.email,
       amount: amountMinor,
-      currency: row.currency,
+      currency: plan.currency,
       reference,
       callback_url: appUrl(request, '/api/billing/paystack/callback'),
       metadata: {
         organization_id: request.auth.organizationId,
         organization: request.auth.organizationName,
-        plan: row.name,
-        interval: values.interval,
+        plan: plan.name,
+        interval,
+        seats,
+        purpose,
         custom_fields: [
           { display_name: 'Workspace', variable_name: 'workspace', value: request.auth.organizationName },
-          { display_name: 'Plan', variable_name: 'plan', value: `${row.name} (${values.interval})` },
+          { display_name: 'Plan', variable_name: 'plan', value: label },
         ],
       },
     }),
   })
-  return response.json({ authorizationUrl: data.authorization_url, reference })
+  return { authorizationUrl: data.authorization_url, reference }
+}
+
+router.post('/billing/checkout', adminsOnly, route(async (request, response) => {
+  if (!paystackEnabled()) throw new HttpError(400, 'Online payment isn’t set up yet. Contact OVO to upgrade.')
+  const values = z.object({
+    plan: z.string().trim().min(1).max(60),
+    interval: z.enum(['monthly', 'yearly']),
+    seats: z.number().int().min(1).max(100000).optional(),
+  }).parse(request.body)
+  const plan = await planRow(values.plan)
+  if (!plan) throw new HttpError(404, 'That plan isn’t available.')
+  const price = values.interval === 'yearly' ? plan.yearly : plan.monthly
+  if (plan.name === 'Free') throw new HttpError(400, 'The Free plan doesn’t need payment. Workspaces move to it automatically when a paid plan ends.')
+  if (!price) throw new HttpError(400, `The ${plan.name} plan has custom pricing. Contact OVO to arrange it.`)
+  const people = await headcount(request.auth.organizationId)
+  // Without extra-person pricing, the plan is a fixed size.
+  const seats = plan.extraUserPrice ? Math.max(plan.included, values.seats ?? people) : plan.included
+  if (seats > plan.userLimit) throw new HttpError(400, `The ${plan.name} plan goes up to ${plan.userLimit} people. Contact OVO for more.`)
+  if (seats < people) throw new HttpError(400, `You have ${people} people (including pending invitations). Choose room for at least ${people}, or remove some first.`)
+  return response.json(await startCheckout(request, { plan, interval: values.interval, seats, purpose: 'plan', amount: planAmount(plan, values.interval, seats) }))
+}))
+
+// The cost of adding people to a paid plan for the rest of its current period.
+function seatQuote(subscription, plan, seats) {
+  const added = seats - subscription.memberLimit
+  const daysLeft = Math.max(1, Math.ceil((new Date(subscription.current_period_end).getTime() - Date.now()) / 86400000))
+  // Priced by the day at the monthly rate; over a long (yearly) period, at the yearly rate.
+  const perDay = (plan.extraUserPrice / 30) * (daysLeft > 31 ? 10 / 12 : 1)
+  return { added, daysLeft, amount: Math.max(100, Math.round(added * perDay * daysLeft)) }
+}
+
+async function seatContext(request, seats) {
+  const subscription = await getSubscription(pool, request.auth.organizationId)
+  const plan = subscription && await planRow(subscription.plan_name)
+  if (!subscription || !plan || subscription.status !== 'active' || !plan.extraUserPrice || !subscription.current_period_end || new Date(subscription.current_period_end) < new Date()) {
+    throw new HttpError(400, 'Adding people is available on an active paid plan. Choose a plan first.')
+  }
+  if (seats <= subscription.memberLimit) throw new HttpError(400, `Your plan already has room for ${subscription.memberLimit} people.`)
+  if (seats > plan.userLimit) throw new HttpError(400, `The ${plan.name} plan goes up to ${plan.userLimit} people. Contact OVO for more.`)
+  return { subscription, plan }
+}
+
+router.get('/billing/seats/quote', adminsOnly, route(async (request, response) => {
+  const seats = z.coerce.number().int().min(1).max(100000).parse(request.query.seats)
+  const { subscription, plan } = await seatContext(request, seats)
+  return response.json({ ...seatQuote(subscription, plan, seats), seats, currency: plan.currency })
+}))
+
+router.post('/billing/seats', adminsOnly, route(async (request, response) => {
+  if (!paystackEnabled()) throw new HttpError(400, 'Online payment isn’t set up yet. Contact OVO to add people.')
+  const { seats } = z.object({ seats: z.number().int().min(1).max(100000) }).parse(request.body)
+  const { subscription, plan } = await seatContext(request, seats)
+  const { amount } = seatQuote(subscription, plan, seats)
+  return response.json(await startCheckout(request, { plan, interval: 'monthly', seats, purpose: 'seats', amount }))
 }))
 
 // Checks a payment the browser came back from, in case the callback ran before Paystack finished.

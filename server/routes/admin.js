@@ -10,6 +10,7 @@ import { ANNOUNCEMENT_CATEGORIES, announcementEmail, emailConfigured, sendBatch,
 import { findIndustry } from '../../shared/industries.js'
 import { seedIndustry } from './sheets.js'
 import { paystackEnabled } from './billing.js'
+import { deleteObjects, newStorageKey, putObject, r2Configured } from '../storage.js'
 
 // Public plan catalogue for the landing page.
 export const publicRouter = express.Router()
@@ -17,7 +18,8 @@ export const publicRouter = express.Router()
 const planSelect = `
   SELECT name, user_limit AS "userLimit", storage_limit_bytes::float AS "storageLimitBytes",
          project_limit AS "projectLimit", monthly_price::float AS "monthlyPrice",
-         yearly_price::float AS "yearlyPrice", currency, active, sort_order AS "sortOrder"
+         yearly_price::float AS "yearlyPrice", currency, active, sort_order AS "sortOrder",
+         COALESCE(included_users, user_limit) AS "includedUsers", extra_user_price::float AS "extraUserPrice", features
   FROM subscription_plans`
 
 publicRouter.get('/plans', route(async (_request, response) => {
@@ -51,6 +53,14 @@ const planSchema = z.object({
   yearlyPrice: z.coerce.number().min(0).max(999999999).nullable(),
   currency: z.string().trim().toUpperCase().regex(/^[A-Z]{3}$/, 'Use a 3-letter currency code such as NGN or USD.'),
   active: z.boolean(),
+  includedUsers: z.coerce.number().int().min(1).max(2147483647).optional(),
+  extraUserPrice: z.coerce.number().min(0).max(999999999).nullable().optional(),
+  features: z.object({
+    forms: z.number().int().min(0).max(100000).nullable(),
+    automations: z.number().int().min(0).max(100000).nullable(),
+    reports: z.boolean(),
+    chatHistoryDays: z.number().int().min(1).max(36500).nullable(),
+  }).optional(),
 })
 
 function audit(db, auth, action, targetType, target, details = {}) {
@@ -204,6 +214,7 @@ router.delete('/organizations/:id', route(async (request, response) => {
   z.uuid().parse(request.params.id)
   const parsed = z.object({ confirmName: z.string() }).safeParse(request.body)
   if (!parsed.success) return validationError(response, parsed.error)
+  let storageKeys = []
   await withTransaction(async (client) => {
     const organization = await client.query('SELECT id, name FROM organizations WHERE id = $1 FOR UPDATE', [request.params.id])
     if (!organization.rowCount) throw new HttpError(404, 'Workspace not found.')
@@ -216,6 +227,12 @@ router.delete('/organizations/:id', route(async (request, response) => {
          AND NOT EXISTS (SELECT 1 FROM organization_members other WHERE other.user_id = om.user_id AND other.organization_id != $1)`,
       [request.params.id],
     )
+    const stored = await client.query(
+      `SELECT storage_key FROM files WHERE organization_id = $1 AND storage_key IS NOT NULL
+       UNION ALL SELECT storage_key FROM chat_attachments WHERE organization_id = $1 AND storage_key IS NOT NULL`,
+      [request.params.id],
+    )
+    storageKeys = stored.rows.map((row) => row.storage_key)
     await client.query('DELETE FROM organizations WHERE id = $1', [request.params.id])
     const orphanIds = orphans.rows.map((row) => row.user_id)
     if (orphanIds.length) {
@@ -232,6 +249,8 @@ router.delete('/organizations/:id', route(async (request, response) => {
     }
     await audit(client, request.auth, 'deleted workspace', 'workspace', organization.rows[0], { removedUsers: orphanIds.length })
   })
+  // Their files in cloud storage go too, once the records are gone.
+  await deleteObjects(storageKeys)
   return response.status(204).end()
 }))
 
@@ -269,6 +288,38 @@ router.get('/email-status', route(async (_request, response) => {
   return response.json({ configured: emailConfigured() })
 }))
 
+// Files still kept inside the database (from before cloud storage was set up).
+async function storageStatus() {
+  const result = await pool.query(
+    `SELECT count(*)::int AS count, COALESCE(sum(size_bytes), 0)::float AS bytes FROM (
+       SELECT size_bytes FROM files WHERE data IS NOT NULL
+       UNION ALL SELECT size_bytes FROM chat_attachments WHERE data IS NOT NULL) stored`,
+  )
+  return { r2: r2Configured(), bucket: r2Configured() ? (process.env.R2_BUCKET || '').trim() : null, inDatabase: result.rows[0] }
+}
+
+// Moves files out of the database into R2, a few at a time so each request finishes quickly.
+// The console calls this repeatedly until nothing is left.
+router.post('/storage/migrate', route(async (_request, response) => {
+  if (!r2Configured()) throw new HttpError(400, 'Set up Cloudflare R2 in Vercel first.')
+  let moved = 0
+  let budget = 25 * 1024 * 1024
+  for (const table of ['files', 'chat_attachments']) {
+    while (budget > 0) {
+      const next = await pool.query(`SELECT id, organization_id, name, mime_type, data FROM ${table} WHERE data IS NOT NULL ORDER BY size_bytes LIMIT 1`)
+      const row = next.rows[0]
+      if (!row) break
+      const key = newStorageKey(row.organization_id, row.name)
+      await putObject(key, row.data, row.mime_type || 'application/octet-stream')
+      const updated = await pool.query(`UPDATE ${table} SET storage_key = $1, data = NULL WHERE id = $2 AND data IS NOT NULL`, [key, row.id])
+      if (!updated.rowCount) await deleteObjects([key])
+      else moved += 1
+      budget -= row.data.length
+    }
+  }
+  return response.json({ moved, remaining: (await storageStatus()).inDatabase })
+}))
+
 // What's configured and what still needs doing, for the console's System page.
 router.get('/system', route(async (_request, response) => {
   const pending = await pendingMigrations().catch(() => null)
@@ -279,6 +330,7 @@ router.get('/system', route(async (_request, response) => {
     owners: { count: platformAdminEmails().length },
     console: { pathSet: Boolean(adminPath()) },
     supportEmail: (process.env.SUPPORT_EMAIL || '').trim() || null,
+    storage: await storageStatus(),
     payments: { paystack: paystackEnabled(), mode: (process.env.PAYSTACK_SECRET_KEY || '').trim().startsWith('sk_live_') ? 'live' : 'test' },
     sessionSecret: true,
   })
@@ -396,9 +448,13 @@ router.put('/plans/:name', route(async (request, response) => {
   const values = parsed.data
   const result = await pool.query(
     `UPDATE subscription_plans SET user_limit = $1, storage_limit_bytes = $2, project_limit = $3,
-            monthly_price = $4, yearly_price = $5, currency = $6, active = $7
+            monthly_price = $4, yearly_price = $5, currency = $6, active = $7,
+            included_users = LEAST($1, COALESCE($9, included_users, $1)),
+            extra_user_price = CASE WHEN $10::boolean THEN $11::numeric ELSE extra_user_price END,
+            features = COALESCE($12::jsonb, features)
      WHERE name = $8 RETURNING id, name`,
-    [values.userLimit, Math.round(values.storageLimitGb * 1024 ** 3), values.projectLimit, values.monthlyPrice, values.yearlyPrice, values.currency, values.active, request.params.name],
+    [values.userLimit, Math.round(values.storageLimitGb * 1024 ** 3), values.projectLimit, values.monthlyPrice, values.yearlyPrice, values.currency, values.active, request.params.name,
+      values.includedUsers ?? null, values.extraUserPrice !== undefined, values.extraUserPrice ?? null, values.features ? JSON.stringify(values.features) : null],
   )
   if (!result.rowCount) return response.status(404).json({ error: 'Plan not found.' })
   await audit(pool, request.auth, 'updated plan', 'plan', result.rows[0], values)

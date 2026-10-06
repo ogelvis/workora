@@ -601,7 +601,22 @@ button.chip { border: 0; }
 .pay-summary strong { color: var(--ink); font-size: 1.2rem; }
 .pay-secure { align-items: center; color: var(--muted); display: flex; font-size: 0.78rem; gap: 6px; margin: 0; }
 .pay-secure .icon { color: var(--success); flex-shrink: 0; }
+.pay-seats { align-items: center; border: 1px solid var(--line); border-radius: 12px; display: flex; gap: 14px; justify-content: space-between; padding: 12px 14px; }
+.pay-seats > div:first-child { display: grid; gap: 3px; }
+.pay-seats strong { color: var(--ink); font-size: 0.9rem; }
+.pay-seats small { color: var(--muted); font-size: 0.78rem; line-height: 1.45; }
+.seat-stepper { align-items: center; display: flex; flex-shrink: 0; gap: 6px; }
+.seat-stepper .btn-icon { font-size: 1.1rem; font-weight: 700; height: 34px; width: 34px; }
+.seat-stepper input { font-weight: 700; height: 34px; padding: 0 6px; text-align: center; width: 64px; }
+.plan-add-people { align-self: flex-start; margin-top: 4px; }
+.chat-history-note { align-items: center; align-self: center; background: var(--soft); border-radius: 999px; color: var(--muted); display: inline-flex; font-size: 0.78rem; gap: 6px; margin: 4px auto 10px; padding: 6px 12px; }
+.chat-history-note button { color: var(--brand); font-weight: 700; }
+.upgrade-card { align-items: center; display: grid; gap: 10px; justify-items: center; padding: 40px 24px; text-align: center; }
+.upgrade-card h2 { margin: 0; }
+.upgrade-card p { color: var(--muted); margin: 0; max-width: 460px; }
+.upgrade-card .empty-icon { background: var(--brand-soft); color: var(--brand); }
 @media (max-width: 640px) {
+  .pay-seats { align-items: stretch; flex-direction: column; }
   .plan-strip { flex-wrap: wrap; }
   .plan-strip .btn { justify-content: center; width: 100%; }
 }

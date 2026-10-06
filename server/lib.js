@@ -38,9 +38,10 @@ export async function withTransaction(work) {
 }
 
 export class HttpError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code) {
     super(message)
     this.status = status
+    this.code = code
   }
 }
 
@@ -85,22 +86,66 @@ export function createToken() {
   return { token, tokenHash: hashToken(token) }
 }
 
+// Days a paid plan keeps working after its period ends, before it drops to Free.
+export const GRACE_DAYS = 7
+
+// Plan features; a missing or null limit means unlimited.
+export function planFeatures(features) {
+  const value = features || {}
+  return {
+    forms: value.forms ?? null,
+    automations: value.automations ?? null,
+    reports: value.reports ?? true,
+    chatHistoryDays: value.chatHistoryDays ?? null,
+  }
+}
+
+const subscriptionQuery = (lock) => `
+  SELECT s.status, s.trial_ends_at, s.current_period_end, s.seats, sp.name AS plan_name, sp.user_limit, sp.storage_limit_bytes, sp.project_limit,
+         sp.monthly_price::float AS monthly_price, sp.yearly_price::float AS yearly_price, sp.currency,
+         sp.included_users, sp.extra_user_price::float AS extra_user_price, sp.features
+  FROM subscriptions s
+  JOIN subscription_plans sp ON sp.id = s.plan_id
+  WHERE s.organization_id = $1
+  ${lock ? 'FOR UPDATE OF s' : ''}`
+
 export async function getSubscription(db, organizationId, { lock = false } = {}) {
-  const result = await db.query(
-    `SELECT s.status, s.trial_ends_at, s.current_period_end, sp.name AS plan_name, sp.user_limit, sp.storage_limit_bytes, sp.project_limit,
-            sp.monthly_price::float AS monthly_price, sp.yearly_price::float AS yearly_price, sp.currency
-     FROM subscriptions s
-     JOIN subscription_plans sp ON sp.id = s.plan_id
-     WHERE s.organization_id = $1
-     ${lock ? 'FOR UPDATE OF s' : ''}`,
-    [organizationId],
-  )
-  const row = result.rows[0]
+  let row = (await db.query(subscriptionQuery(lock), [organizationId])).rows[0]
   if (!row) return null
-  // Reported to the UI only: without a payment provider there is no way to upgrade,
-  // so an ended trial must not lock a workspace out of its own data.
-  const trialExpired = row.status === 'trial' && Boolean(row.trial_ends_at) && new Date(row.trial_ends_at) < new Date()
-  return { ...row, trialExpired }
+  const now = Date.now()
+  const trialOver = row.status === 'trial' && Boolean(row.trial_ends_at) && new Date(row.trial_ends_at).getTime() < now
+  const lapsed = row.status === 'active' && row.plan_name !== 'Free' && Boolean(row.current_period_end)
+    && new Date(row.current_period_end).getTime() + GRACE_DAYS * 86400000 < now
+  // An ended trial or an unpaid plan moves to Free: the workspace keeps its data, with Free's limits.
+  if (trialOver || lapsed) {
+    const moved = await db.query(
+      `UPDATE subscriptions SET plan_id = free.id, status = 'active', seats = NULL, current_period_end = NULL
+       FROM subscription_plans free WHERE free.name = 'Free' AND subscriptions.organization_id = $1 RETURNING subscriptions.id`,
+      [organizationId],
+    )
+    if (moved.rowCount) row = (await db.query(subscriptionQuery(false), [organizationId])).rows[0]
+  }
+  const stillTrialExpired = row.status === 'trial' && Boolean(row.trial_ends_at) && new Date(row.trial_ends_at).getTime() < now
+  const included = row.included_users ?? row.user_limit
+  // Paid plans can buy extra people; the plan's user_limit is the hard ceiling.
+  const memberLimit = Math.min(row.user_limit, Math.max(included, row.status === 'active' ? row.seats || 0 : 0))
+  return { ...row, trialExpired: stillTrialExpired, memberLimit, features: planFeatures(row.features), isFree: row.plan_name === 'Free' }
+}
+
+export async function featuresFor(db, organizationId) {
+  const subscription = await getSubscription(db, organizationId)
+  return subscription ? subscription.features : planFeatures(null)
+}
+
+// Stops creating another form or automation past the plan's allowance.
+export async function assertPlanCount(db, organizationId, key, table, noun) {
+  const subscription = await getSubscription(db, organizationId)
+  const limit = subscription?.features[key]
+  if (limit === null || limit === undefined) return
+  const count = await db.query(`SELECT count(*)::int AS count FROM ${table} WHERE organization_id = $1`, [organizationId])
+  if (count.rows[0].count >= limit) {
+    throw new HttpError(403, `The ${subscription.plan_name} plan includes ${limit} ${limit === 1 ? noun : `${noun}s`}. Upgrade your plan in Billing to add more.`, 'upgrade')
+  }
 }
 
 // Wraps an async route so thrown HttpErrors become JSON responses.
@@ -109,7 +154,7 @@ export function route(handler) {
     try {
       return await handler(request, response, next)
     } catch (error) {
-      if (error instanceof HttpError) return response.status(error.status).json({ error: error.message })
+      if (error instanceof HttpError) return response.status(error.status).json({ error: error.message, ...(error.code ? { code: error.code } : {}) })
       if (error instanceof z.ZodError) return validationError(response, error)
       // invalid_text_representation: a malformed UUID in the URL can never match a record.
       if (error.code === '22P02') return response.status(404).json({ error: 'That record could not be found.' })

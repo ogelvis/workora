@@ -101,7 +101,7 @@ router.post('/register', authLimiter, route(async (request, response) => {
     )
     await client.query(
       `INSERT INTO subscriptions (organization_id, plan_id, status)
-       SELECT $1, id, 'trial' FROM subscription_plans WHERE name = 'Starter'`,
+       SELECT $1, id, 'trial' FROM subscription_plans WHERE name = (CASE WHEN EXISTS (SELECT 1 FROM subscription_plans WHERE name = 'Free') THEN 'Business' ELSE 'Starter' END)`,
       [organizationId],
     )
     await client.query(
@@ -359,6 +359,8 @@ router.get('/me', requireAuth, route(async (request, response) => {
       trialEndsAt: subscription.trial_ends_at,
       trialExpired: subscription.trialExpired,
       currentPeriodEnd: subscription.current_period_end,
+      features: subscription.features,
+      isFree: subscription.isFree,
     },
   })
 }))
@@ -536,13 +538,9 @@ router.post('/accept-invite', authLimiter, route(async (request, response) => {
   const account = await withTransaction(async (client) => {
     const invitation = await findInvitation(client, values.token)
     if (!invitation) throw new HttpError(404, 'This invitation link is invalid or has expired.')
-    await client.query('SELECT 1 FROM subscriptions WHERE organization_id = $1 FOR UPDATE', [invitation.organization_id])
-    const limits = await client.query(
-      `SELECT sp.user_limit, (SELECT count(*)::int FROM organization_members WHERE organization_id = $1) AS members
-       FROM subscriptions s JOIN subscription_plans sp ON sp.id = s.plan_id WHERE s.organization_id = $1`,
-      [invitation.organization_id],
-    )
-    if (limits.rows[0] && limits.rows[0].members >= limits.rows[0].user_limit) {
+    const subscription = await getSubscription(client, invitation.organization_id, { lock: true })
+    const members = await client.query('SELECT count(*)::int AS count FROM organization_members WHERE organization_id = $1', [invitation.organization_id])
+    if (subscription && members.rows[0].count >= subscription.memberLimit) {
       throw new HttpError(409, 'This workspace has reached its member limit. Ask the owner to upgrade the plan.')
     }
 

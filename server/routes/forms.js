@@ -4,7 +4,7 @@ import rateLimit from 'express-rate-limit'
 import { z } from 'zod'
 import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
-import { HttpError, MANAGERS, logActivity, notify, route, withTransaction } from '../lib.js'
+import { HttpError, MANAGERS, assertPlanCount, logActivity, notify, route, withTransaction } from '../lib.js'
 import { clean } from '../sheet-values.js'
 import { runAutomations } from '../automation.js'
 import { loadSheet } from './sheets.js'
@@ -70,6 +70,7 @@ router.post('/forms', route(async (request, response) => {
   const values = formSchema.parse(request.body)
   const sheet = await loadSheet(pool, values.sheetId, request.auth, { need: 'full' })
   checkFields(values.fields, sheet)
+  await assertPlanCount(pool, request.auth.organizationId, 'forms', 'forms', 'form')
   const token = randomBytes(9).toString('base64url')
   const result = await pool.query(
     `INSERT INTO forms (organization_id, sheet_id, title, description, fields, color, token, active, submit_message, notify, created_by)

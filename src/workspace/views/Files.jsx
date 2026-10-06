@@ -95,7 +95,10 @@ function Files({ vault }) {
       }
       setUploading(`Uploading ${file.name}…`)
       try {
-        await uploadFile(file, { folder: target, vault })
+        await uploadFile(file, {
+          folder: target, vault, direct: state.directUploads,
+          onProgress: (percent) => setUploading(`Uploading ${file.name}… ${percent}%`),
+        })
         remaining -= file.size
         done += 1
       } catch (error) {

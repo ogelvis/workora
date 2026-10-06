@@ -54,7 +54,27 @@ export async function api(path, options = {}) {
   return readResponse(response)
 }
 
-export async function uploadFile(file, { folder, vault }) {
+// Sends a file straight to cloud storage when the server supports it.
+// Returns null when it doesn't, so the caller can fall back to uploading through the API.
+export async function directUpload(file, target, { caption, onProgress } = {}) {
+  const start = await api('/api/uploads', { method: 'POST', body: { name: file.name, size: file.size, type: file.type || 'application/octet-stream', ...target } })
+  if (!start.direct) return null
+  await new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    request.open('PUT', start.uploadUrl)
+    request.upload.onprogress = (event) => { if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100)) }
+    request.onload = () => (request.status >= 200 && request.status < 300 ? resolve() : reject(new Error(`The upload failed (HTTP ${request.status}). Please try again.`)))
+    request.onerror = () => reject(new Error('The upload was interrupted. Check your connection and try again.'))
+    request.send(file)
+  })
+  return api('/api/uploads/complete', { method: 'POST', body: { ticket: start.ticket, caption } })
+}
+
+export async function uploadFile(file, { folder, vault, direct, onProgress }) {
+  if (direct) {
+    const result = await directUpload(file, { target: 'files', folder, vault: Boolean(vault) }, { onProgress })
+    if (result) return result
+  }
   const query = new URLSearchParams({ folder, vault: vault ? '1' : '0' })
   let response
   try {

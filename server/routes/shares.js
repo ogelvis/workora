@@ -3,6 +3,7 @@ import express from 'express'
 import rateLimit from 'express-rate-limit'
 import { z } from 'zod'
 import { pool } from '../db.js'
+import { downloadUrl } from '../storage.js'
 import { requireAuth } from '../auth.js'
 import { ADMINS, HttpError, MANAGERS, logActivity, notify, route } from '../lib.js'
 import { allows, permissionFor, readable } from '../sheet-values.js'
@@ -238,7 +239,8 @@ publicShareRouter.get('/public/share/:token', viewLimiter, route(async (request,
 publicShareRouter.get('/public/share/:token/download', viewLimiter, route(async (request, response) => {
   const link = await activeLink(request.params.token)
   if (!link || link.resource_type !== 'file') return response.status(404).json({ error: 'This link doesn’t exist, has expired or was turned off.' })
-  const file = await pool.query('SELECT name, data FROM files WHERE id = $1 AND organization_id = $2 AND NOT vault', [link.resource_id, link.organization_id])
+  const file = await pool.query('SELECT name, data, storage_key FROM files WHERE id = $1 AND organization_id = $2 AND NOT vault', [link.resource_id, link.organization_id])
+  if (file.rows[0]?.storage_key) return response.redirect(302, await downloadUrl(file.rows[0].storage_key, file.rows[0].name))
   if (!file.rowCount) return response.status(404).json({ error: 'This file has been removed.' })
   response.set({
     'Content-Type': 'application/octet-stream',

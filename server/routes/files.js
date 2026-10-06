@@ -4,6 +4,7 @@ import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
 import { ADMINS, HttpError, MANAGERS, getSubscription, logActivity, route, withTransaction } from '../lib.js'
 import { formatStorage } from '../format.js'
+import { R2_MAX_FILE_BYTES, deleteObjects, downloadUrl, r2Configured } from '../storage.js'
 
 const router = express.Router()
 router.use(requireAuth)
@@ -31,7 +32,7 @@ function scope(request, vault) {
 }
 
 // Built-in folders plus any the business added itself (and any older folder that still holds files).
-async function folderNames(db, organizationId, vault) {
+export async function folderNames(db, organizationId, vault) {
   const custom = await db.query(
     'SELECT name FROM file_folders WHERE organization_id = $1 AND vault = $2 ORDER BY created_at',
     [organizationId, vault],
@@ -109,7 +110,8 @@ router.get('/files', route(async (request, response) => {
       custom: known.custom.has(name),
     })),
     canManageFolders: vault ? canUseVault(request.auth.role) : MANAGERS.includes(request.auth.role),
-    maxFileBytes: MAX_FILE_BYTES,
+    maxFileBytes: r2Configured() ? R2_MAX_FILE_BYTES : MAX_FILE_BYTES,
+    directUploads: r2Configured(),
   })
 }))
 
@@ -197,7 +199,7 @@ router.delete('/files/folders', route(async (request, response) => {
 
 async function findFile(request, withData) {
   const result = await pool.query(
-    `SELECT id, name, vault, mime_type, uploaded_by ${withData ? ', data' : ''}
+    `SELECT id, name, vault, mime_type, uploaded_by, storage_key ${withData ? ', data' : ''}
      FROM files WHERE id = $1 AND organization_id = $2`,
     [request.params.id, request.auth.organizationId],
   )
@@ -211,6 +213,7 @@ router.get('/files/:id/download', route(async (request, response) => {
   z.uuid().parse(request.params.id)
   const file = await findFile(request, true)
   const inline = request.query.inline === '1' && INLINE_TYPES.has(file.mime_type)
+  if (file.storage_key) return response.redirect(302, await downloadUrl(file.storage_key, file.name, { inline, mimeType: file.mime_type }))
   response.set({
     'Content-Type': inline ? file.mime_type : 'application/octet-stream',
     'Content-Length': file.data.length,
@@ -230,6 +233,7 @@ router.delete('/files/:id', route(async (request, response) => {
     return response.status(403).json({ error: 'You can only delete files you uploaded.' })
   }
   await pool.query('DELETE FROM files WHERE id = $1', [file.id])
+  await deleteObjects([file.storage_key])
   await logActivity(pool, request.auth, file.vault ? 'removed from the vault' : 'deleted', 'file', file.name)
   return response.status(204).end()
 }))

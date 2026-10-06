@@ -439,7 +439,7 @@
 .lp-footer-bottom a { color: #9391a3; text-decoration: none; }
 
 @media (min-width: 1050px) {
-  .lp-plan-grid { grid-template-columns: repeat(3, 1fr); }
+  .lp-plan-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 }
 
 @media (max-width: 900px) {

@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { pool } from '../db.js'
 import { runAutomations } from '../automation.js'
 import { requireAuth } from '../auth.js'
-import { HttpError, MANAGERS, logActivity, notify, route, withTransaction } from '../lib.js'
+import { HttpError, MANAGERS, featuresFor, logActivity, notify, route, withTransaction } from '../lib.js'
 
 // Progress tracking: daily updates on tasks, the owner's daily view, and weekly reports.
 const router = express.Router()
@@ -76,8 +76,16 @@ router.post('/tasks/:id/updates', route(async (request, response) => {
 
 // ---------------------------------------------------------------- Owner's daily view
 // The browser sends the start and end of "today" in its own time zone.
-router.get('/reports/daily', route(async (request, response) => {
+// Team reports (the owner's daily and weekly views) are a paid-plan feature.
+async function assertReports(request) {
   if (!isManager(request.auth)) throw new HttpError(403, 'Only owners, admins and managers can see team reports.')
+  if (!(await featuresFor(pool, request.auth.organizationId)).reports) {
+    throw new HttpError(403, 'Team reports are part of the Business plan. Upgrade in Billing to see everyone’s daily progress and weekly reports.', 'upgrade')
+  }
+}
+
+router.get('/reports/daily', route(async (request, response) => {
+  await assertReports(request)
   const range = z.object({ from: z.iso.datetime({ offset: true }), to: z.iso.datetime({ offset: true }) }).parse(request.query)
   const [updates, people] = await Promise.all([
     pool.query(
@@ -190,7 +198,7 @@ router.put('/reports/weekly', route(async (request, response) => {
 
 // Owners and managers: everyone's report for a week, and who hasn't sent one yet.
 router.get('/reports/weekly', route(async (request, response) => {
-  if (!isManager(request.auth)) throw new HttpError(403, 'Only owners, admins and managers can see team reports.')
+  await assertReports(request)
   const week = weekSchema.parse(request.query.week)
   const [reports, members] = await Promise.all([
     pool.query(
