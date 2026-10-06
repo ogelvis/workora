@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import Icon from './components/Icon.jsx'
 import { BrandMark, Field } from './components/ui.jsx'
 import { api } from './lib/api.js'
-import { capitalize } from './lib/format.js'
 import { INDUSTRIES, SHEET_TEMPLATES } from '../shared/industries.js'
 import './auth.css'
 

@@ -415,6 +415,94 @@ router.get('/audit', route(async (_request, response) => {
   return response.json({ entries: result.rows })
 }))
 
+// ---------------------------------------------------------------- Revenue
+// Money in = Paystack payments (automatic) + income recorded here; money out = expenses recorded here.
+const ledgerSchema = z.object({
+  kind: z.enum(['inflow', 'outflow']),
+  amount: z.coerce.number().positive('Enter an amount above zero.').max(999999999999),
+  category: z.string().trim().min(1).max(60),
+  description: z.string().trim().max(300).optional().default(''),
+  occurredOn: z.iso.date(),
+  organizationId: z.union([z.uuid(), z.literal('')]).optional(),
+})
+
+const transactions = `
+  SELECT p.id, 'inflow' AS kind, p.amount_minor::float / 100 AS amount, p.currency, 'Subscriptions' AS category,
+         p.plan_name || ' plan · ' || p.billing_interval || ' (Paystack)' AS description,
+         (p.paid_at AT TIME ZONE 'UTC')::date AS "occurredOn", o.name AS organization, 'paystack' AS source, p.paid_at AS "createdAt"
+  FROM payments p LEFT JOIN organizations o ON o.id = p.organization_id WHERE p.status = 'success'
+  UNION ALL
+  SELECT l.id, l.kind, l.amount::float, l.currency, l.category, l.description, l.occurred_on, o.name, 'manual', l.created_at
+  FROM platform_ledger l LEFT JOIN organizations o ON o.id = l.organization_id`
+
+router.get('/revenue', route(async (_request, response) => {
+  const [monthly, totals, recent, mrr, categories] = await Promise.all([
+    pool.query(
+      `WITH months AS (
+         SELECT generate_series(date_trunc('month', CURRENT_DATE) - interval '11 months', date_trunc('month', CURRENT_DATE), interval '1 month')::date AS month
+       ), t AS (${transactions})
+       SELECT to_char(m.month, 'YYYY-MM') AS month,
+              COALESCE(sum(t.amount) FILTER (WHERE t.kind = 'inflow'), 0)::float AS inflow,
+              COALESCE(sum(t.amount) FILTER (WHERE t.kind = 'outflow'), 0)::float AS outflow
+       FROM months m LEFT JOIN t ON date_trunc('month', t."occurredOn") = m.month
+       GROUP BY m.month ORDER BY m.month`,
+    ),
+    pool.query(
+      `WITH t AS (${transactions})
+       SELECT
+         COALESCE(sum(amount) FILTER (WHERE kind = 'inflow' AND "occurredOn" >= date_trunc('month', CURRENT_DATE)), 0)::float AS "inflowThisMonth",
+         COALESCE(sum(amount) FILTER (WHERE kind = 'outflow' AND "occurredOn" >= date_trunc('month', CURRENT_DATE)), 0)::float AS "outflowThisMonth",
+         COALESCE(sum(amount) FILTER (WHERE kind = 'inflow' AND "occurredOn" >= date_trunc('month', CURRENT_DATE) - interval '1 month' AND "occurredOn" < date_trunc('month', CURRENT_DATE)), 0)::float AS "inflowLastMonth",
+         COALESCE(sum(amount) FILTER (WHERE kind = 'outflow' AND "occurredOn" >= date_trunc('month', CURRENT_DATE) - interval '1 month' AND "occurredOn" < date_trunc('month', CURRENT_DATE)), 0)::float AS "outflowLastMonth",
+         COALESCE(sum(amount) FILTER (WHERE kind = 'inflow' AND "occurredOn" >= date_trunc('year', CURRENT_DATE)), 0)::float AS "inflowYear",
+         COALESCE(sum(amount) FILTER (WHERE kind = 'outflow' AND "occurredOn" >= date_trunc('year', CURRENT_DATE)), 0)::float AS "outflowYear",
+         COALESCE(sum(amount) FILTER (WHERE kind = 'inflow'), 0)::float AS "inflowAll",
+         COALESCE(sum(amount) FILTER (WHERE kind = 'outflow'), 0)::float AS "outflowAll"
+       FROM t`,
+    ),
+    pool.query(`SELECT * FROM (${transactions}) t ORDER BY "occurredOn" DESC, "createdAt" DESC LIMIT 200`),
+    // Monthly recurring revenue: each workspace's latest paid period that is still running, as a monthly amount.
+    pool.query(
+      `SELECT COALESCE(sum(CASE WHEN billing_interval = 'yearly' THEN amount_minor::float / 1200 ELSE amount_minor::float / 100 END), 0)::float AS mrr,
+              count(*)::int AS paying
+       FROM (SELECT DISTINCT ON (organization_id) * FROM payments WHERE status = 'success' ORDER BY organization_id, paid_at DESC) latest
+       WHERE period_end > now()`,
+    ),
+    pool.query(
+      `SELECT category, kind, sum(amount)::float AS total FROM (${transactions}) t
+       WHERE "occurredOn" >= date_trunc('year', CURRENT_DATE) GROUP BY category, kind ORDER BY total DESC`,
+    ),
+  ])
+  return response.json({
+    monthly: monthly.rows,
+    totals: totals.rows[0],
+    mrr: mrr.rows[0].mrr,
+    payingWorkspaces: mrr.rows[0].paying,
+    categories: categories.rows,
+    transactions: recent.rows,
+    currency: 'NGN',
+  })
+}))
+
+router.post('/ledger', route(async (request, response) => {
+  const values = ledgerSchema.parse(request.body)
+  const result = await pool.query(
+    `INSERT INTO platform_ledger (kind, amount, category, description, occurred_on, organization_id, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+    [values.kind, values.amount, values.category, values.description, values.occurredOn, values.organizationId || null, request.auth.userId],
+  )
+  await audit(pool, request.auth, values.kind === 'inflow' ? 'recorded income' : 'recorded an expense', 'ledger', { id: result.rows[0].id, name: `${values.category} ${values.amount}` }, values)
+  return response.status(201).json({ id: result.rows[0].id })
+}))
+
+router.delete('/ledger/:id', route(async (request, response) => {
+  z.uuid().parse(request.params.id)
+  const result = await pool.query('DELETE FROM platform_ledger WHERE id = $1 RETURNING kind, category, amount', [request.params.id])
+  if (!result.rowCount) throw new HttpError(404, 'Entry not found. Paystack payments can’t be deleted here.')
+  await audit(pool, request.auth, 'deleted a ledger entry', 'ledger', { id: request.params.id, name: `${result.rows[0].category} ${result.rows[0].amount}` })
+  return response.status(204).end()
+}))
+
 // ---------------------------------------------------------------- Announcements
 const announcementSchema = z.object({
   category: z.enum(Object.keys(ANNOUNCEMENT_CATEGORIES)),

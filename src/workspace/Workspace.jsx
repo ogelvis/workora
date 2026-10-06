@@ -15,6 +15,7 @@ import Automations from './views/Automations.jsx'
 import Updates, { UPDATE_CATEGORIES } from './views/Updates.jsx'
 import { PayModal } from './Pay.jsx'
 import { InviteModal } from './Invite.jsx'
+import Reports from './views/Reports.jsx'
 import Overview from './views/Overview.jsx'
 import Projects from './views/Projects.jsx'
 import Tasks from './views/Tasks.jsx'
@@ -32,7 +33,7 @@ import './ovo.css'
 const views = {
   overview: Overview, projects: Projects, tasks: Tasks, clients: Clients, campaigns: Campaigns,
   calendar: Calendar, files: Files, vault: Files, chat: Chat, notifications: Notifications,
-  billing: Billing, settings: Settings, sheets: Sheets, sheet: Sheet, forms: Forms, automations: Automations, updates: Updates,
+  billing: Billing, settings: Settings, sheets: Sheets, sheet: Sheet, forms: Forms, automations: Automations, updates: Updates, reports: Reports,
 }
 
 // Which store collections each record type touches, so a save refreshes only what changed.

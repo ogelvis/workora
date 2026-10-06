@@ -2,7 +2,8 @@ import express from 'express'
 import { z } from 'zod'
 import { pool } from '../db.js'
 import { requireAuth, requireRole } from '../auth.js'
-import { MANAGERS, HttpError, logActivity, route, validationError } from '../lib.js'
+import { MANAGERS, HttpError, logActivity, route, validationError, withTransaction } from '../lib.js'
+import { MAX_FILE_BYTES, assertStorage, uploadedName } from './files.js'
 
 const router = express.Router()
 router.use(requireAuth)
@@ -15,6 +16,21 @@ const channelSchema = z.object({
 })
 
 const messageSchema = z.object({ body: z.string().trim().min(1).max(4000) })
+
+// A message can carry one shared document.
+const attachmentJson = `CASE WHEN a.id IS NULL THEN NULL ELSE json_build_object(
+  'id', a.id, 'name', a.name, 'mimeType', a.mime_type, 'sizeBytes', a.size_bytes::float) END AS attachment`
+const attachmentColumns = `a.id, a.name, a.mime_type AS "mimeType", a.size_bytes::float AS "sizeBytes", a.created_at AS "createdAt", u.full_name AS "uploadedBy"`
+const rawUpload = express.raw({ type: 'application/octet-stream', limit: MAX_FILE_BYTES })
+
+function readUpload(request) {
+  const name = uploadedName(request)
+  if (!name) throw new HttpError(400, 'Choose a file with a name.')
+  if (!Buffer.isBuffer(request.body) || !request.body.length) throw new HttpError(400, 'The file is empty.')
+  let caption = ''
+  try { caption = decodeURIComponent(request.get('x-caption') || '').trim().slice(0, 4000) } catch { caption = '' }
+  return { name, caption, mimeType: (request.get('x-file-type') || 'application/octet-stream').slice(0, 120), data: request.body }
+}
 
 async function assertChannel(organizationId, channelId) {
   const result = await pool.query(
@@ -67,8 +83,9 @@ router.get('/channels/:id/messages', route(async (request, response) => {
   await assertChannel(request.auth.organizationId, request.params.id)
   const result = await pool.query(
     `SELECT * FROM (
-       SELECT m.id, m.body, m.created_at AS "createdAt", m.user_id AS "userId", u.full_name AS "userName"
+       SELECT m.id, m.body, m.created_at AS "createdAt", m.user_id AS "userId", u.full_name AS "userName", ${attachmentJson}
        FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id
+       LEFT JOIN chat_attachments a ON a.message_id = m.id AND a.channel_id = m.channel_id
        WHERE m.channel_id = $1
        ORDER BY m.created_at DESC LIMIT 200
      ) recent ORDER BY "createdAt" ASC`,
@@ -88,6 +105,38 @@ router.post('/channels/:id/messages', route(async (request, response) => {
     [request.auth.organizationId, request.params.id, request.auth.userId, parsed.data.body],
   )
   return response.status(201).json({ message: { ...result.rows[0], userName: request.auth.fullName } })
+}))
+
+router.post('/channels/:id/attachments', rawUpload, route(async (request, response) => {
+  z.uuid().parse(request.params.id)
+  const upload = readUpload(request)
+  await assertChannel(request.auth.organizationId, request.params.id)
+  const message = await withTransaction(async (client) => {
+    await assertStorage(client, request.auth.organizationId, upload.data.length)
+    const inserted = await client.query(
+      `INSERT INTO chat_messages (organization_id, channel_id, user_id, body)
+       VALUES ($1, $2, $3, $4) RETURNING id, body, created_at AS "createdAt", user_id AS "userId"`,
+      [request.auth.organizationId, request.params.id, request.auth.userId, upload.caption || `Shared ${upload.name}`],
+    )
+    const attachment = await client.query(
+      `INSERT INTO chat_attachments (organization_id, channel_id, message_id, name, mime_type, size_bytes, data, uploaded_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, name, mime_type AS "mimeType", size_bytes::float AS "sizeBytes"`,
+      [request.auth.organizationId, request.params.id, inserted.rows[0].id, upload.name, upload.mimeType, upload.data.length, upload.data, request.auth.userId],
+    )
+    return { ...inserted.rows[0], userName: request.auth.fullName, attachment: attachment.rows[0] }
+  })
+  return response.status(201).json({ message })
+}))
+
+router.get('/channels/:id/attachments', route(async (request, response) => {
+  z.uuid().parse(request.params.id)
+  await assertChannel(request.auth.organizationId, request.params.id)
+  const result = await pool.query(
+    `SELECT ${attachmentColumns} FROM chat_attachments a LEFT JOIN users u ON u.id = a.uploaded_by
+     WHERE a.channel_id = $1 AND a.organization_id = $2 ORDER BY a.created_at`,
+    [request.params.id, request.auth.organizationId],
+  )
+  return response.json({ attachments: result.rows })
 }))
 
 // ---------------------------------------------------------------- Direct messages
@@ -158,8 +207,9 @@ router.get('/dms/:id/messages', route(async (request, response) => {
   const conversation = await findConversation(request)
   const result = await pool.query(
     `SELECT * FROM (
-       SELECT m.id, m.body, m.created_at AS "createdAt", m.sender_id AS "userId", u.full_name AS "userName"
+       SELECT m.id, m.body, m.created_at AS "createdAt", m.sender_id AS "userId", u.full_name AS "userName", ${attachmentJson}
        FROM direct_messages m LEFT JOIN users u ON u.id = m.sender_id
+       LEFT JOIN chat_attachments a ON a.message_id = m.id AND a.conversation_id = m.conversation_id
        WHERE m.conversation_id = $1
        ORDER BY m.created_at DESC LIMIT 200
      ) recent ORDER BY "createdAt" ASC`,
@@ -193,6 +243,61 @@ router.post('/dms/:id/messages', route(async (request, response) => {
     [conversation.id, result.rows[0].createdAt],
   )
   return response.status(201).json({ message: { ...result.rows[0], userName: request.auth.fullName } })
+}))
+
+router.post('/dms/:id/attachments', rawUpload, route(async (request, response) => {
+  const upload = readUpload(request)
+  const conversation = await findConversation(request)
+  const message = await withTransaction(async (client) => {
+    await assertStorage(client, request.auth.organizationId, upload.data.length)
+    const inserted = await client.query(
+      `INSERT INTO direct_messages (conversation_id, sender_id, body) VALUES ($1, $2, $3)
+       RETURNING id, body, created_at AS "createdAt", sender_id AS "userId"`,
+      [conversation.id, request.auth.userId, upload.caption || `Shared ${upload.name}`],
+    )
+    const attachment = await client.query(
+      `INSERT INTO chat_attachments (organization_id, conversation_id, message_id, name, mime_type, size_bytes, data, uploaded_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, name, mime_type AS "mimeType", size_bytes::float AS "sizeBytes"`,
+      [request.auth.organizationId, conversation.id, inserted.rows[0].id, upload.name, upload.mimeType, upload.data.length, upload.data, request.auth.userId],
+    )
+    await client.query(
+      `UPDATE direct_conversations SET last_message_at = $2, ${participantColumn(conversation, request.auth.userId)} = $2 WHERE id = $1`,
+      [conversation.id, inserted.rows[0].createdAt],
+    )
+    return { ...inserted.rows[0], userName: request.auth.fullName, attachment: attachment.rows[0] }
+  })
+  return response.status(201).json({ message })
+}))
+
+router.get('/dms/:id/attachments', route(async (request, response) => {
+  const conversation = await findConversation(request)
+  const result = await pool.query(
+    `SELECT ${attachmentColumns} FROM chat_attachments a LEFT JOIN users u ON u.id = a.uploaded_by
+     WHERE a.conversation_id = $1 ORDER BY a.created_at`,
+    [conversation.id],
+  )
+  return response.json({ attachments: result.rows })
+}))
+
+// Channel documents are open to the whole workspace; direct-message documents only to the two people.
+router.get('/chat/attachments/:id/download', route(async (request, response) => {
+  z.uuid().parse(request.params.id)
+  const result = await pool.query(
+    `SELECT a.name, a.data, a.channel_id, c.user_a, c.user_b
+     FROM chat_attachments a LEFT JOIN direct_conversations c ON c.id = a.conversation_id
+     WHERE a.id = $1 AND a.organization_id = $2`,
+    [request.params.id, request.auth.organizationId],
+  )
+  const file = result.rows[0]
+  if (!file || (!file.channel_id && ![file.user_a, file.user_b].includes(request.auth.userId))) throw new HttpError(404, 'File not found.')
+  response.set({
+    'Content-Type': 'application/octet-stream',
+    'Content-Length': file.data.length,
+    'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+    'Cache-Control': 'private, no-store',
+    'Content-Security-Policy': "default-src 'none'; sandbox",
+  })
+  return response.send(file.data)
 }))
 
 export default router
