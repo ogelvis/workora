@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Icon from '../components/Icon.jsx'
-import { Avatar, BrandMark, Confirm, IconButton, useToast } from '../components/ui.jsx'
+import { Avatar, AvatarContext, BrandMark, Confirm, IconButton, useToast } from '../components/ui.jsx'
 import { RecordForm } from '../components/RecordForms.jsx'
 import { recordTypes } from '../lib/constants.js'
 import { api } from '../lib/api.js'
@@ -243,8 +243,16 @@ function Workspace({ account, setAccount, onSignedOut }) {
   ].filter((group) => group.items.length)
   const lookups = { clients: data.clients, projects: data.projects, members: data.members }
 
+  // Profile pictures by name, for the many places that only know a teammate's name.
+  // Names shared by two people show initials rather than risk the wrong face.
+  const pictures = new Map()
+  for (const member of data.members) pictures.set(member.fullName, pictures.has(member.fullName) ? null : member.avatarUrl || null)
+  pictures.set(account.user.fullName, account.user.avatarUrl || pictures.get(account.user.fullName) || null)
+  const avatarFor = (name) => pictures.get(name) || null
+
   return (
     <WorkspaceContext.Provider value={context}>
+    <AvatarContext.Provider value={avatarFor}>
       <div className={`ws${navOpen ? ' nav-open' : ''}`}>
         <aside className="ws-sidebar" aria-label="Workspace navigation">
           <div className="ws-brand">
@@ -371,6 +379,7 @@ function Workspace({ account, setAccount, onSignedOut }) {
       {paying && <PayModal onClose={() => setPaying(false)} />}
       {inviting && <InviteModal onClose={() => setInviting(false)} />}
       {newSheet !== null && <NewSheetModal initialTemplate={newSheet} onClose={() => setNewSheet(null)} />}
+    </AvatarContext.Provider>
     </WorkspaceContext.Provider>
   )
 }

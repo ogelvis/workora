@@ -516,6 +516,16 @@ button.chip { border: 0; }
 .account-id { align-items: center; background: var(--soft); border-radius: 14px; display: flex; gap: 14px; margin-bottom: 14px; padding: 12px 14px; }
 .account-id > div { display: flex; flex-direction: column; min-width: 0; }
 .account-id strong { color: var(--ink); font-size: 1rem; }
+.photo-pick { background: none; border: 0; border-radius: 50%; cursor: pointer; flex-shrink: 0; padding: 0; position: relative; }
+.photo-pick:focus-visible { outline: 3px solid var(--brand-soft); }
+.photo-pick-badge { align-items: center; background: var(--brand); border: 2px solid #fff; border-radius: 50%; bottom: -2px; color: #fff; display: flex; height: 22px; justify-content: center; position: absolute; right: -2px; width: 22px; }
+.photo-pick-badge .spinner { border-color: rgba(255, 255, 255, 0.4); border-top-color: #fff; height: 11px; width: 11px; }
+.photo-actions { display: flex; gap: 12px; margin-top: 4px; }
+.photo-actions .text-link { font-size: 0.8rem; }
+.text-link.danger { color: var(--danger, #b4233c); }
+.member-contact { display: flex; flex-direction: column; font-size: 0.8rem; gap: 2px; }
+.member-contact a { color: var(--text); text-decoration: none; }
+.member-contact small { color: var(--muted); }
 .account-id small { color: var(--muted); font-size: 0.8rem; overflow-wrap: anywhere; }
 .settings-card .notice { margin: 0 0 14px; }
 .notice-info { background: var(--brand-soft); color: var(--ink); }
@@ -532,7 +542,8 @@ button.chip { border: 0; }
 .update-card { border-top: 4px solid var(--tone); display: flex; flex-direction: column; gap: 10px; padding: 22px 24px; scroll-margin-top: 80px; }
 .update-card.highlighted { box-shadow: 0 0 0 2px color-mix(in srgb, var(--tone) 35%, transparent), var(--shadow-sm, none); }
 .update-card h2 { color: var(--ink); font-size: 1.25rem; letter-spacing: -0.02em; margin: 0; }
-.update-meta { align-items: center; display: flex; gap: 10px; justify-content: space-between; }
+.update-meta { align-items: center; display: flex; flex-wrap: wrap; gap: 8px 10px; }
+.update-meta > small { margin-left: auto; }
 .update-meta small { color: var(--muted); font-size: 0.8rem; }
 .update-tag { align-items: center; background: var(--tone-soft); border-radius: 999px; color: var(--tone); display: inline-flex; font-size: 0.72rem; font-weight: 750; gap: 5px; letter-spacing: 0.04em; padding: 4px 10px; text-transform: uppercase; }
 .update-body { color: var(--ink); font-size: 0.94rem; line-height: 1.65; }
@@ -813,3 +824,5 @@ button.chip { border: 0; }
   .rp-stepper strong { flex: 1; font-size: 0.8rem; white-space: normal; }
   .rp-form { padding: 14px; }
 }
+
+.update-personal { background: var(--soft); border-radius: 999px; color: var(--muted); font-size: 0.7rem; font-weight: 700; padding: 2px 8px; }

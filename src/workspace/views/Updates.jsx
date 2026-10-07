@@ -9,6 +9,7 @@ export const UPDATE_CATEGORIES = {
   policy: { label: 'Policy update', tone: 'teal', icon: 'scale' },
   security: { label: 'Security notice', tone: 'rose', icon: 'shield' },
   service: { label: 'Service notice', tone: 'amber', icon: 'alert' },
+  message: { label: 'Message from OVO', tone: 'sky', icon: 'mail' },
 }
 
 // Blank lines make paragraphs and "- " lines make lists, matching the email.
@@ -37,7 +38,7 @@ function Updates() {
 
   return (
     <div className="stack narrow">
-      <PageHeader eyebrow="OVO" title="What’s new" description="Product news, policy changes and important notices from the OVO team." />
+      <PageHeader eyebrow="OVO" title="What’s new" description="Product news, policy changes, important notices and messages from the OVO team." />
       {!items ? <div className="card chart-skeleton" /> : !items.length ? (
         <Empty icon="sparkle" title="No updates yet">Announcements from the OVO team will appear here.</Empty>
       ) : items.map((item) => {
@@ -46,6 +47,7 @@ function Updates() {
           <article key={item.id} id={`update-${item.id}`} className={`card update-card tone-${info.tone}${params.id === item.id ? ' highlighted' : ''}`}>
             <div className="update-meta">
               <span className="update-tag"><Icon name={info.icon} size={13} />{info.label}</span>
+              {item.personal && <span className="update-personal">Sent to you</span>}
               <small>{new Date(item.sentAt).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}</small>
             </div>
             <h2>{item.title}</h2>

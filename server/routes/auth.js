@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import bcrypt from 'bcryptjs'
 import express from 'express'
+import { avatarUrl } from './profile.js'
 import rateLimit from 'express-rate-limit'
 import { z } from 'zod'
 import { pool } from '../db.js'
@@ -343,10 +344,18 @@ router.post('/logout', route(async (request, response) => {
 router.get('/me', requireAuth, route(async (request, response) => {
   const [subscription, user] = await Promise.all([
     getSubscription(pool, request.auth.organizationId),
-    pool.query('SELECT password_set, product_updates, terms_version FROM users WHERE id = $1', [request.auth.userId]),
+    pool.query(
+      `SELECT u.password_set, u.product_updates, u.terms_version, ${profileColumns},
+              (SELECT updated_at FROM user_avatars a WHERE a.user_id = u.id) AS avatar_at
+       FROM users u WHERE u.id = $1`,
+      [request.auth.userId],
+    ),
   ])
+  const account = accountPayload(request.auth)
+  const me = user.rows[0] || {}
   return response.json({
-    ...accountPayload(request.auth),
+    ...account,
+    user: { ...account.user, avatarUrl: avatarUrl(request.auth.userId, me.avatar_at), phone: me.phone ?? null, jobTitle: me.jobTitle ?? null, dateOfBirth: me.dateOfBirth ?? null },
     organization: { id: request.auth.organizationId, name: request.auth.organizationName, industry: request.auth.organizationIndustry },
     platformAdmin: request.auth.platformAdmin,
     passwordSet: user.rows[0]?.password_set ?? true,
@@ -410,19 +419,43 @@ router.post('/accept-terms', requireAuth, route(async (request, response) => {
 }))
 
 // ---------------------------------------------------------------- My account
+// Empty text clears a detail; leaving a field out keeps it as it is.
+const optionalText = (max, message) => z.string().trim().max(max, message).optional()
+const profileSchema = z.object({
+  fullName: z.string().trim().min(2, 'Enter your full name.').max(120).optional(),
+  productUpdates: z.boolean().optional(),
+  phone: optionalText(30, 'That phone number is too long.').refine((value) => !value || /^\+?[0-9\s()-]{7,20}$/.test(value), 'Enter a phone number using digits, spaces and an optional + at the start.'),
+  jobTitle: optionalText(80, 'Keep your job title under 80 characters.'),
+  dateOfBirth: z.union([z.literal(''), z.iso.date()]).optional().refine((value) => {
+    if (!value) return true
+    const date = new Date(`${value}T00:00:00Z`)
+    const age = (Date.now() - date.getTime()) / (365.25 * 86400000)
+    return age >= 13 && age <= 110
+  }, 'Enter a real date of birth.'),
+})
+
+export const profileColumns = `u.phone, u.job_title AS "jobTitle", to_char(u.date_of_birth, 'YYYY-MM-DD') AS "dateOfBirth"`
+
 router.put('/profile', requireAuth, route(async (request, response) => {
-  const values = z.object({
-    fullName: z.string().trim().min(2, 'Enter your full name.').max(120).optional(),
-    productUpdates: z.boolean().optional(),
-  }).parse(request.body)
+  const values = profileSchema.parse(request.body)
+  // A column set to itself keeps its value; '' clears it.
+  const keep = (value) => (value === undefined ? null : value === '' ? '' : value)
   const result = await pool.query(
-    `UPDATE users SET full_name = COALESCE($1, full_name), product_updates = COALESCE($2, product_updates)
-     WHERE id = $3 RETURNING full_name, product_updates`,
-    [values.fullName ?? null, values.productUpdates ?? null, request.auth.userId],
+    `UPDATE users u SET full_name = COALESCE($1, full_name), product_updates = COALESCE($2, product_updates),
+       phone = CASE WHEN $3::text IS NULL THEN phone ELSE NULLIF($3, '') END,
+       job_title = CASE WHEN $4::text IS NULL THEN job_title ELSE NULLIF($4, '') END,
+       date_of_birth = CASE WHEN $5::text IS NULL THEN date_of_birth ELSE NULLIF($5, '')::date END
+     WHERE id = $6 RETURNING full_name, product_updates, ${profileColumns}`,
+    [values.fullName ?? null, values.productUpdates ?? null, keep(values.phone), keep(values.jobTitle), keep(values.dateOfBirth), request.auth.userId],
   )
-  const fullName = result.rows[0].full_name
-  if (values.fullName && request.auth.organizationId) await logActivity(pool, request.auth, 'updated their profile', 'user', fullName)
-  return response.json({ user: { id: request.auth.userId, fullName, email: displayEmail(request.auth.email) }, productUpdates: result.rows[0].product_updates })
+  const row = result.rows[0]
+  const changedDetails = ['fullName', 'phone', 'jobTitle', 'dateOfBirth'].some((key) => values[key] !== undefined)
+  if (changedDetails && request.auth.organizationId) await logActivity(pool, request.auth, 'updated their profile', 'user', row.full_name)
+  return response.json({
+    user: { id: request.auth.userId, fullName: row.full_name, email: displayEmail(request.auth.email) },
+    profile: { phone: row.phone, jobTitle: row.jobTitle, dateOfBirth: row.dateOfBirth },
+    productUpdates: row.product_updates,
+  })
 }))
 
 // Email-change links are signed rather than stored: they carry the user, the new address and

@@ -7,10 +7,19 @@ export function BrandMark({ size = 28, label, white = false }) {
   return <img className="brand-logo" src={white ? '/ovo-logo-white.png' : '/ovo-logo.png'} alt={label || ''} aria-hidden={label ? undefined : 'true'} height={size} style={{ height: size }} />
 }
 
-export function Avatar({ name, size = 'md' }) {
+// Inside a workspace, maps a teammate's name to their profile picture (when they've added one).
+export const AvatarContext = createContext(null)
+
+export function Avatar({ name, size = 'md', src, photo = true }) {
+  const lookup = useContext(AvatarContext)
+  const [failed, setFailed] = useState('')
+  const url = src !== undefined ? src : photo && lookup ? lookup(name) : null
   // A stable soft tint per person, drawn from the brand's muted palette.
   const tints = ['#e1dcef', '#e3e8f7', '#f4e6dc', '#efe2ea', '#e8e7ef', '#f1ecd9']
   const index = [...(name || '')].reduce((sum, char) => sum + char.charCodeAt(0), 0) % tints.length
+  if (url && failed !== url) {
+    return <span className={`avatar avatar-${size} avatar-photo`} title={name}><img src={url} alt="" loading="lazy" onError={() => setFailed(url)} /></span>
+  }
   return <span className={`avatar avatar-${size}`} style={{ background: tints[index] }} title={name}>{initials(name)}</span>
 }
 

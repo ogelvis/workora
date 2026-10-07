@@ -208,6 +208,7 @@ export const ANNOUNCEMENT_CATEGORIES = {
   policy: { label: 'Policy update', color: '#0f766e', why: 'You’re receiving this mandatory service announcement to update you about important changes to OVO’s terms or policies.' },
   security: { label: 'Security notice', color: '#b4233c', why: 'You’re receiving this mandatory security notice because you have an OVO account.' },
   service: { label: 'Service notice', color: '#a8620c', why: 'You’re receiving this mandatory service announcement about your OVO account.' },
+  message: { label: 'Message from OVO', color: '#1d5fd1', why: 'You’re receiving this message from the OVO team about your account.' },
 }
 
 // Plain text in, safe email HTML out: blank lines make paragraphs, "- " lines make bullet lists.
@@ -259,7 +260,7 @@ ${info.why}${optional ? ` To stop receiving product updates, go to Settings → 
       </td></tr>
     </table>
   </td></tr></table></body></html>`
-  return { subject: category === 'product' ? title : `[${info.label}] ${title}`, text, html }
+  return { subject: category === 'product' || category === 'message' ? title : `[${info.label}] ${title}`, text, html }
 }
 
 const ROLE_WORDS = { admin: 'an admin', manager: 'a manager', staff: 'a team member' }

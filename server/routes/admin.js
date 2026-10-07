@@ -568,24 +568,62 @@ router.delete('/ledger/:id', route(async (request, response) => {
 // ---------------------------------------------------------------- Announcements
 const announcementSchema = z.object({
   category: z.enum(Object.keys(ANNOUNCEMENT_CATEGORIES)),
-  audience: z.enum(['everyone', 'admins', 'owners']),
+  // Everyone with a role, chosen people, or everyone in one business.
+  audience: z.enum(['everyone', 'admins', 'owners', 'people', 'workspace']),
+  userIds: z.array(z.uuid()).max(500).optional().default([]),
+  organizationId: z.uuid().optional(),
   title: z.string().trim().min(1, 'Add a title.').max(150),
   body: z.string().trim().min(1, 'Write the message.').max(10000),
   ctaLabel: z.string().trim().max(40).optional().default(''),
   ctaUrl: z.union([z.literal(''), z.url({ protocol: /^https?$/ }).max(500)]).optional().default(''),
+}).superRefine((values, context) => {
+  if (values.audience === 'people' && !values.userIds.length) context.addIssue({ code: 'custom', path: ['userIds'], message: 'Choose who to send it to.' })
+  if (values.audience === 'workspace' && !values.organizationId) context.addIssue({ code: 'custom', path: ['organizationId'], message: 'Choose a business.' })
 })
 const AUDIENCE_ROLES = { everyone: ['owner', 'admin', 'manager', 'staff'], admins: ['owner', 'admin'], owners: ['owner'] }
 
-// One row per person (someone in two workspaces gets one email); product updates respect opt-outs.
+// Which workspace memberships an announcement reaches ($1), and whether product opt-outs apply ($2).
+// Direct messages and notices always arrive; only product updates respect the opt-out.
+function audienceFilter(values) {
+  const target = values.audience === 'people'
+    ? ['om.user_id = ANY($1::uuid[])', values.userIds]
+    : values.audience === 'workspace'
+      ? ['om.organization_id = $1::uuid', values.organizationId]
+      : ['om.role = ANY($1::text[])', AUDIENCE_ROLES[values.audience]]
+  return { where: `${target[0]} AND ($2 OR u.product_updates)`, params: [target[1], values.category !== 'product'] }
+}
+
+// One row per person (someone in two workspaces gets one email).
 function recipients(db, values) {
+  const filter = audienceFilter(values)
   return db.query(
     `SELECT DISTINCT ON (u.id) u.id, u.full_name AS "fullName", u.email
      FROM users u JOIN organization_members om ON om.user_id = u.id
-     WHERE om.role = ANY($1) AND ($2 OR u.product_updates)
+     WHERE ${filter.where}
      ORDER BY u.id, om.created_at`,
-    [AUDIENCE_ROLES[values.audience], values.category !== 'product'],
+    filter.params,
   )
 }
+
+// Find people or businesses to send to.
+router.get('/announcements/targets', route(async (request, response) => {
+  const q = z.string().trim().max(120).optional().default('').parse(request.query.q)
+  const [people, businesses] = await Promise.all([
+    pool.query(
+      `SELECT DISTINCT ON (u.id) u.id, u.full_name AS "fullName", u.email, o.name AS "organizationName", om.role
+       FROM users u JOIN organization_members om ON om.user_id = u.id JOIN organizations o ON o.id = om.organization_id
+       WHERE $1 = '' OR u.full_name ILIKE '%' || $1 || '%' OR u.email ILIKE '%' || $1 || '%' OR o.name ILIKE '%' || $1 || '%'
+       ORDER BY u.id, om.created_at LIMIT 20`,
+      [q],
+    ),
+    pool.query(
+      `SELECT o.id, o.name, (SELECT count(*)::int FROM organization_members m WHERE m.organization_id = o.id) AS members
+       FROM organizations o WHERE $1 = '' OR o.name ILIKE '%' || $1 || '%' ORDER BY o.name LIMIT 20`,
+      [q],
+    ),
+  ])
+  return response.json({ people: people.rows, businesses: businesses.rows })
+}))
 
 function renderAnnouncement(request, values, fullName) {
   return announcementEmail({
@@ -601,7 +639,9 @@ router.get('/announcements', route(async (_request, response) => {
   const result = await pool.query(
     `SELECT a.id, a.category, a.audience, a.title, a.body, a.cta_label AS "ctaLabel", a.cta_url AS "ctaUrl",
             a.recipient_count AS "recipientCount", a.emailed_count AS "emailedCount", a.failed_count AS "failedCount",
-            a.sent_at AS "sentAt", $1::text AS "sentBy"
+            a.sent_at AS "sentAt", $1::text AS "sentBy",
+            (SELECT string_agg(u.full_name, ', ') FROM users u WHERE u.id = ANY(a.recipient_ids)) AS "recipientNames",
+            (SELECT o.name FROM organizations o WHERE o.id = a.organization_id) AS "organizationName"
      FROM announcements a ORDER BY a.sent_at DESC LIMIT 100`,
     [ownerPublicEmail()],
   )
@@ -611,7 +651,8 @@ router.get('/announcements', route(async (_request, response) => {
 router.post('/announcements/preview', route(async (request, response) => {
   const values = announcementSchema.parse(request.body)
   const people = await recipients(pool, values)
-  const email = renderAnnouncement(request, values, request.auth.fullName)
+  // Shown as the first recipient will see it (each email greets its own reader by name).
+  const email = renderAnnouncement(request, values, people.rows[0]?.fullName || request.auth.fullName)
   return response.json({ subject: email.subject, html: email.html, recipients: people.rowCount })
 }))
 
@@ -628,20 +669,22 @@ router.post('/announcements', route(async (request, response) => {
   if (!people.length) throw new HttpError(400, 'Nobody matches this audience yet.')
   const announcement = await withTransaction(async (client) => {
     const created = await client.query(
-      `INSERT INTO announcements (category, audience, title, body, cta_label, cta_url, recipient_count, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-      [values.category, values.audience, values.title, values.body, values.ctaUrl ? values.ctaLabel || 'Learn more' : null, values.ctaUrl || null, people.length, request.auth.userId],
+      `INSERT INTO announcements (category, audience, title, body, cta_label, cta_url, recipient_count, created_by, recipient_ids, organization_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+      [values.category, values.audience, values.title, values.body, values.ctaUrl ? values.ctaLabel || 'Learn more' : null, values.ctaUrl || null, people.length, request.auth.userId,
+        values.audience === 'people' ? values.userIds : null, values.audience === 'workspace' ? values.organizationId : null],
     )
     const id = created.rows[0].id
     // Everyone also sees it inside OVO, so the message lands even without email.
+    const filter = audienceFilter(values)
     await client.query(
       `INSERT INTO notifications (organization_id, user_id, title, message, resource_type, resource_id, link)
-       SELECT om.organization_id, om.user_id, $1, $2, 'announcement', $3, $4
+       SELECT om.organization_id, om.user_id, $3, $4, 'announcement', $5, $6
        FROM organization_members om JOIN users u ON u.id = om.user_id
-       WHERE om.role = ANY($5) AND ($6 OR u.product_updates)`,
-      [`${ANNOUNCEMENT_CATEGORIES[values.category].label}: ${values.title}`, values.body.slice(0, 280), id, `#/updates?id=${id}`, AUDIENCE_ROLES[values.audience], values.category !== 'product'],
+       WHERE ${filter.where}`,
+      [...filter.params, `${ANNOUNCEMENT_CATEGORIES[values.category].label}: ${values.title}`, values.body.slice(0, 280), id, `#/updates?id=${id}`],
     )
-    await audit(client, request.auth, 'sent announcement', 'announcement', { id, name: values.title }, { category: values.category, audience: values.audience, recipients: people.length })
+    await audit(client, request.auth, values.category === 'message' ? 'sent a message' : 'sent announcement', 'announcement', { id, name: values.title }, { category: values.category, audience: values.audience, recipients: people.length })
     return id
   })
   const result = await sendBatch(people.map((person) => ({ to: person.email, ...renderAnnouncement(request, values, person.fullName) })))

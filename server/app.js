@@ -9,6 +9,7 @@ import { pool } from './db.js'
 import { pendingMigrations } from './migrations.js'
 import adminRoutes, { publicRouter as publicRoutes } from './routes/admin.js'
 import authRoutes from './routes/auth.js'
+import profileRoutes from './routes/profile.js'
 import chatRoutes from './routes/chat.js'
 import fileRoutes from './routes/files.js'
 import automationRoutes from './routes/automations.js'
@@ -69,6 +70,7 @@ app.get('/api/health', async (_request, response, next) => {
 })
 
 app.use('/api/auth', authRoutes)
+app.use('/api/auth', profileRoutes)
 app.use('/api', publicRoutes)
 // Public form and share pages: no sign-in, so they go before the signed-in routers.
 app.use('/api', publicFormRouter)

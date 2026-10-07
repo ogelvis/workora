@@ -11,9 +11,14 @@ const AUDIENCES = { owner: ['everyone', 'admins', 'owners'], admin: ['everyone',
 
 router.get('/announcements', route(async (request, response) => {
   const result = await pool.query(
-    `SELECT id, category, title, body, cta_label AS "ctaLabel", cta_url AS "ctaUrl", sent_at AS "sentAt"
-     FROM announcements WHERE audience = ANY($1) ORDER BY sent_at DESC LIMIT 50`,
-    [AUDIENCES[request.auth.role] || ['everyone']],
+    `SELECT id, category, title, body, cta_label AS "ctaLabel", cta_url AS "ctaUrl", sent_at AS "sentAt",
+            audience IN ('people', 'workspace') AS personal
+     FROM announcements
+     WHERE audience = ANY($1)
+        OR (audience = 'people' AND $2::uuid = ANY(recipient_ids))
+        OR (audience = 'workspace' AND organization_id = $3)
+     ORDER BY sent_at DESC LIMIT 50`,
+    [AUDIENCES[request.auth.role] || ['everyone'], request.auth.userId, request.auth.organizationId],
   )
   return response.json({ announcements: result.rows })
 }))

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Icon from '../../components/Icon.jsx'
 import { Avatar, Button, Field, IconButton, Modal, PageHeader, Pill, Segmented, copyText } from '../../components/ui.jsx'
 import { api } from '../../lib/api.js'
@@ -229,14 +229,21 @@ function Team() {
       <section className="card table-card">
         <div className="card-head pad"><div><h2>Members</h2><p>{data.members.length} {data.members.length === 1 ? 'person' : 'people'} in {account.organization.name}</p></div></div>
         <table className="table">
-          <thead><tr><th>Name</th><th>Role</th><th>Open tasks</th><th>Joined</th><th aria-label="Actions" /></tr></thead>
+          <thead><tr><th>Name</th><th>Contact</th><th>Role</th><th>Open tasks</th><th>Joined</th><th aria-label="Actions" /></tr></thead>
           <tbody>
             {data.members.map((member) => (
               <tr key={member.id}>
                 <td>
                   <div className="client-cell">
                     <Avatar name={member.fullName} size="sm" />
-                    <div className="two-line"><strong>{member.fullName}{member.id === account.user.id && <span className="you"> · you</span>}</strong><span>{member.email}</span></div>
+                    <div className="two-line"><strong>{member.fullName}{member.id === account.user.id && <span className="you"> · you</span>}</strong><span>{member.jobTitle || <span className="muted">No job title yet</span>}</span></div>
+                  </div>
+                </td>
+                <td>
+                  <div className="member-contact">
+                    <a href={`mailto:${member.email}`}>{member.email}</a>
+                    {member.phone && <a href={`tel:${member.phone.replace(/[^+\d]/g, '')}`}>{member.phone}</a>}
+                    {member.dateOfBirth && <small>Birthday {new Date(`${member.dateOfBirth}T00:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'long' })}</small>}
                   </div>
                 </td>
                 <td>
@@ -371,11 +378,11 @@ function Account() {
     event.preventDefault()
     setSavingName(true)
     try {
-      const { fullName } = Object.fromEntries(new FormData(event.currentTarget).entries())
-      const result = await api('/api/auth/profile', { method: 'PUT', body: { fullName } })
-      setAccount((current) => ({ ...current, user: { ...current.user, fullName: result.user.fullName } }))
+      const { fullName, jobTitle, phone, dateOfBirth } = Object.fromEntries(new FormData(event.currentTarget).entries())
+      const result = await api('/api/auth/profile', { method: 'PUT', body: { fullName, jobTitle, phone, dateOfBirth } })
+      setAccount((current) => ({ ...current, user: { ...current.user, fullName: result.user.fullName, ...result.profile } }))
       reload(['members'])
-      toast('Your name was saved')
+      toast('Your details were saved')
     } catch (error) {
       toast(error.message, 'error')
     } finally {
@@ -414,12 +421,12 @@ function Account() {
     <div className="grid-1-1">
       <form className="card settings-card" onSubmit={saveName}>
         <div className="card-head"><div><h2>Your details</h2><p>How you appear to your team across OVO.</p></div></div>
-        <div className="account-id">
-          <Avatar name={account.user.fullName} size="lg" />
-          <div><strong>{account.user.fullName}</strong><small>{account.user.email} · {capitalize(account.role)}</small></div>
-        </div>
-        <fieldset disabled={savingName} className="form-grid single">
-          <Field label="Full name"><input name="fullName" required minLength={2} maxLength={120} defaultValue={account.user.fullName} autoComplete="name" /></Field>
+        <ProfilePhoto />
+        <fieldset disabled={savingName} className="form-grid">
+          <Field label="Full name" wide><input name="fullName" required minLength={2} maxLength={120} defaultValue={account.user.fullName} autoComplete="name" /></Field>
+          <Field label="Job title" hint={`Your role at ${account.organization.name}, e.g. Sales Manager`}><input name="jobTitle" maxLength={80} defaultValue={account.user.jobTitle || ''} autoComplete="organization-title" placeholder="e.g. Sales Manager" /></Field>
+          <Field label="Phone number"><input name="phone" type="tel" maxLength={30} defaultValue={account.user.phone || ''} autoComplete="tel" placeholder="+234 801 234 5678" /></Field>
+          <Field label="Date of birth" hint="Only you and your workspace owners and admins can see this."><input name="dateOfBirth" type="date" defaultValue={account.user.dateOfBirth || ''} max={new Date().toISOString().slice(0, 10)} /></Field>
         </fieldset>
         <div className="settings-section">
           <span className="field-label">Emails from OVO</span>
@@ -428,7 +435,7 @@ function Account() {
             <span><strong>Product updates</strong><small>New features and improvements. Policy, security and service notices are always sent, because they affect your account.</small></span>
           </label>
         </div>
-        <div className="card-foot"><button type="submit" className="btn btn-primary" disabled={savingName}>{savingName ? 'Saving…' : 'Save name'}</button></div>
+        <div className="card-foot"><button type="submit" className="btn btn-primary" disabled={savingName}>{savingName ? 'Saving…' : 'Save details'}</button></div>
       </form>
       <form className="card settings-card" onSubmit={changeEmail}>
         <div className="card-head"><div><h2>Sign-in email</h2><p>You currently sign in as <strong>{account.user.email}</strong>.</p></div></div>
@@ -449,6 +456,83 @@ function Account() {
         )}
         {!needsPassword && <div className="card-foot"><button type="submit" className="btn btn-primary" disabled={changing}>{changing ? 'Saving…' : 'Change email'}</button></div>}
       </form>
+    </div>
+  )
+}
+
+// Shrinks a chosen photo to a small square in the browser, so uploads stay tiny and fast.
+async function squarePhoto(file, size = 320) {
+  const image = await new Promise((resolve, reject) => {
+    const element = new Image()
+    element.onload = () => resolve(element)
+    element.onerror = () => reject(new Error('That picture couldn’t be opened. Try a JPEG or PNG photo.'))
+    element.src = URL.createObjectURL(file)
+  })
+  const side = Math.min(image.naturalWidth, image.naturalHeight)
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  canvas.getContext('2d').drawImage(image, (image.naturalWidth - side) / 2, (image.naturalHeight - side) / 2, side, side, 0, 0, size, size)
+  URL.revokeObjectURL(image.src)
+  return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.88))
+}
+
+function ProfilePhoto() {
+  const { account, setAccount, reload, toast } = useWorkspace()
+  const [busy, setBusy] = useState(false)
+  const input = useRef(null)
+
+  async function save(blob) {
+    const response = await fetch('/api/auth/avatar', { method: blob ? 'PUT' : 'DELETE', credentials: 'same-origin', headers: blob ? { 'Content-Type': 'image/jpeg' } : {}, body: blob || undefined })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(result.error || 'The picture couldn’t be saved.')
+    setAccount((current) => ({ ...current, user: { ...current.user, avatarUrl: result.avatarUrl } }))
+    reload(['members'])
+  }
+
+  async function choose(event) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    if (!file.type.startsWith('image/')) { toast('Choose a picture file.', 'error'); return }
+    setBusy(true)
+    try {
+      await save(await squarePhoto(file))
+      toast('Profile picture updated')
+    } catch (error) {
+      toast(error.message, 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function remove() {
+    setBusy(true)
+    try {
+      await save(null)
+      toast('Profile picture removed')
+    } catch (error) {
+      toast(error.message, 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="account-id">
+      <button type="button" className="photo-pick" onClick={() => input.current?.click()} disabled={busy} aria-label="Change profile picture">
+        <Avatar name={account.user.fullName} size="lg" src={account.user.avatarUrl || null} />
+        <span className="photo-pick-badge">{busy ? <span className="spinner" /> : <Icon name="upload" size={13} />}</span>
+      </button>
+      <div>
+        <strong>{account.user.fullName}</strong>
+        <small>{account.user.jobTitle ? `${account.user.jobTitle} · ` : ''}{account.user.email} · {capitalize(account.role)}</small>
+        <span className="photo-actions">
+          <button type="button" className="text-link" onClick={() => input.current?.click()} disabled={busy}>{account.user.avatarUrl ? 'Change photo' : 'Add a photo'}</button>
+          {account.user.avatarUrl && <button type="button" className="text-link danger" onClick={remove} disabled={busy}>Remove</button>}
+        </span>
+      </div>
+      <input ref={input} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={choose} />
     </div>
   )
 }

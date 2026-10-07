@@ -218,6 +218,8 @@ body.modal-open { overflow: hidden; }
 .avatar-sm { font-size: 0.66rem; height: 28px; width: 28px; }
 .avatar-xs { font-size: 0.56rem; height: 20px; width: 20px; }
 .avatar.pending { background: var(--soft); color: var(--faint); }
+.avatar-photo { background: var(--soft); overflow: hidden; }
+.avatar-photo img { border-radius: inherit; display: block; height: 100%; object-fit: cover; width: 100%; }
 
 .spinner {
   animation: spin 0.8s linear infinite;
