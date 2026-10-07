@@ -20,3 +20,4 @@
 .ia-banner-install { background: #5b2ef0; border: 0; border-radius: 10px; color: #fff; cursor: pointer; font-size: 0.84rem; font-weight: 700; padding: 9px 14px; }
 .ia-banner-close { align-items: center; background: none; border: 0; color: #8d8aa3; cursor: pointer; display: flex; padding: 6px; }
 @media (min-width: 900px) { .ia-banner { display: none; } }
+.ia-btn-icon { align-items: center; display: inline-flex; justify-content: center; }
