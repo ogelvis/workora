@@ -1,0 +1,22 @@
+.ia-backdrop { align-items: center; background: rgba(17, 14, 40, 0.55); display: flex; inset: 0; justify-content: center; padding: 16px; position: fixed; z-index: 5000; }
+.ia-dialog { background: #fff; border-radius: 22px; box-shadow: 0 30px 80px rgba(20, 12, 60, 0.3); color: #1a1730; max-height: calc(100vh - 32px); max-width: 440px; overflow-y: auto; padding: 28px 24px 22px; position: relative; text-align: center; width: 100%; }
+.ia-close { align-items: center; background: #f3f1fa; border: 0; border-radius: 50%; color: #4a4663; cursor: pointer; display: flex; height: 34px; justify-content: center; position: absolute; right: 14px; top: 14px; width: 34px; }
+.ia-icon { border: 1px solid #ece9f6; display: block; margin: 0 auto; border-radius: 16px; box-shadow: 0 8px 24px rgba(91, 46, 240, 0.15); }
+.ia-dialog h2 { font-size: 1.2rem; margin: 14px 0 4px; }
+.ia-lede { color: #6b6884; font-size: 0.88rem; margin: 0 0 16px; }
+.ia-tabs { background: #f3f1fa; border-radius: 12px; display: grid; gap: 4px; grid-template-columns: repeat(3, 1fr); margin-bottom: 16px; padding: 4px; }
+.ia-tabs button { background: none; border: 0; border-radius: 9px; color: #6b6884; cursor: pointer; font-size: 0.8rem; font-weight: 700; padding: 8px 4px; }
+.ia-tabs button.active { background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08); color: #1a1730; }
+.ia-steps { counter-reset: step; display: grid; gap: 10px; list-style: none; margin: 0 0 18px; padding: 0; text-align: left; }
+.ia-steps li { align-items: flex-start; counter-increment: step; display: flex; font-size: 0.9rem; gap: 12px; line-height: 1.5; }
+.ia-steps li::before { align-items: center; background: #5b2ef0; border-radius: 50%; color: #fff; content: counter(step); display: flex; flex-shrink: 0; font-size: 0.78rem; font-weight: 800; height: 24px; justify-content: center; margin-top: 1px; width: 24px; }
+.ia-glyph { background: #eef2ff; border-radius: 6px; padding: 0 5px; }
+.ia-done { background: #5b2ef0; border: 0; border-radius: 12px; color: #fff; cursor: pointer; font-size: 0.95rem; font-weight: 700; padding: 12px; width: 100%; }
+.ia-banner { align-items: center; background: #fff; border: 1px solid #e7e4f3; border-radius: 16px; bottom: 14px; box-shadow: 0 12px 34px rgba(20, 12, 60, 0.18); display: flex; gap: 10px; left: 12px; padding: 10px 10px 10px 12px; position: fixed; right: 12px; z-index: 900; }
+.ia-banner img { border-radius: 9px; flex-shrink: 0; }
+.ia-banner > div { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.ia-banner strong { color: #1a1730; font-size: 0.9rem; }
+.ia-banner small { color: #6b6884; font-size: 0.76rem; }
+.ia-banner-install { background: #5b2ef0; border: 0; border-radius: 10px; color: #fff; cursor: pointer; font-size: 0.84rem; font-weight: 700; padding: 9px 14px; }
+.ia-banner-close { align-items: center; background: none; border: 0; color: #8d8aa3; cursor: pointer; display: flex; padding: 6px; }
+@media (min-width: 900px) { .ia-banner { display: none; } }
