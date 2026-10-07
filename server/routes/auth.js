@@ -4,7 +4,7 @@ import express from 'express'
 import rateLimit from 'express-rate-limit'
 import { z } from 'zod'
 import { pool } from '../db.js'
-import { adminPath, createSession, destroySession, hashToken, isPlatformAdmin, platformAdminEmails, requireAuth } from '../auth.js'
+import { adminPath, createSession, destroySession, displayEmail, hashToken, isPlatformAdmin, platformAdminEmails, requireAuth } from '../auth.js'
 import { seedIndustry } from './sheets.js'
 import { emailChangedEmail, emailConfigured, ownerResetEmail, passwordResetEmail, sendMail, verifyEmailChangeEmail } from '../mail.js'
 import { findIndustry } from '../../shared/industries.js'
@@ -59,7 +59,7 @@ const changePasswordSchema = z.object({
 
 function accountPayload({ userId, fullName, email, organizationId, organizationName, role }) {
   return {
-    user: { id: userId, fullName, email },
+    user: { id: userId, fullName, email: displayEmail(email) },
     organization: { id: organizationId, name: organizationName },
     role,
   }
@@ -422,7 +422,7 @@ router.put('/profile', requireAuth, route(async (request, response) => {
   )
   const fullName = result.rows[0].full_name
   if (values.fullName && request.auth.organizationId) await logActivity(pool, request.auth, 'updated their profile', 'user', fullName)
-  return response.json({ user: { id: request.auth.userId, fullName, email: request.auth.email }, productUpdates: result.rows[0].product_updates })
+  return response.json({ user: { id: request.auth.userId, fullName, email: displayEmail(request.auth.email) }, productUpdates: result.rows[0].product_updates })
 }))
 
 // Email-change links are signed rather than stored: they carry the user, the new address and
