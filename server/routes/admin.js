@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs'
 import express from 'express'
 import { z } from 'zod'
 import { pool } from '../db.js'
-import { adminPath, platformAdminEmails, requireAuth } from '../auth.js'
+import { adminPath, displayEmail, ownerPublicEmail, platformAdminEmails, requireAuth } from '../auth.js'
 import { pendingMigrations } from '../migrations.js'
 import { HttpError, appUrl, createToken, emailSchema, route, validationError, withTransaction } from '../lib.js'
 import { ANNOUNCEMENT_CATEGORIES, announcementEmail, emailConfigured, sendBatch, sendMail, welcomeEmail } from '../mail.js'
@@ -117,8 +117,9 @@ router.get('/overview', route(async (_request, response) => {
       FROM generate_series(date_trunc('week', now()) - interval '11 weeks', date_trunc('week', now()), interval '1 week') AS week
       LEFT JOIN organizations o ON date_trunc('week', o.created_at) = week
       GROUP BY week ORDER BY week`),
-    pool.query(`SELECT id, admin_email AS "adminEmail", action, target_type AS "targetType", target_name AS "targetName", created_at AS "createdAt"
-                FROM admin_audit_log ORDER BY created_at DESC LIMIT 8`),
+    // Every entry shows the public owner address; the private sign-in email stays in the database only.
+    pool.query(`SELECT id, $1::text AS "adminEmail", action, target_type AS "targetType", target_name AS "targetName", created_at AS "createdAt"
+                FROM admin_audit_log ORDER BY created_at DESC LIMIT 8`, [ownerPublicEmail()]),
     // Workspaces that need the owner's attention soon, most urgent first.
     pool.query(`
       SELECT o.id, o.name, o.partner, s.status, s.trial_ends_at AS "trialEndsAt", s.current_period_end AS "currentPeriodEnd",
@@ -418,7 +419,8 @@ router.get('/users', route(async (request, response) => {
      ORDER BY u.created_at DESC LIMIT 500`,
     [query.q || null],
   )
-  return response.json({ users: result.rows })
+  // The owner's sign-in email is private; owners are listed under the public owner address.
+  return response.json({ users: result.rows.map((row) => ({ ...row, email: displayEmail(row.email) })) })
 }))
 
 router.post('/users/:id/reset-link', route(async (request, response) => {
@@ -465,9 +467,10 @@ router.put('/plans/:name', route(async (request, response) => {
 
 router.get('/audit', route(async (_request, response) => {
   const result = await pool.query(
-    `SELECT id, admin_email AS "adminEmail", action, target_type AS "targetType", target_name AS "targetName",
+    `SELECT id, $1::text AS "adminEmail", action, target_type AS "targetType", target_name AS "targetName",
             details, created_at AS "createdAt"
      FROM admin_audit_log ORDER BY created_at DESC LIMIT 300`,
+    [ownerPublicEmail()],
   )
   return response.json({ entries: result.rows })
 }))
@@ -598,8 +601,9 @@ router.get('/announcements', route(async (_request, response) => {
   const result = await pool.query(
     `SELECT a.id, a.category, a.audience, a.title, a.body, a.cta_label AS "ctaLabel", a.cta_url AS "ctaUrl",
             a.recipient_count AS "recipientCount", a.emailed_count AS "emailedCount", a.failed_count AS "failedCount",
-            a.sent_at AS "sentAt", u.email AS "sentBy"
-     FROM announcements a LEFT JOIN users u ON u.id = a.created_by ORDER BY a.sent_at DESC LIMIT 100`,
+            a.sent_at AS "sentAt", $1::text AS "sentBy"
+     FROM announcements a ORDER BY a.sent_at DESC LIMIT 100`,
+    [ownerPublicEmail()],
   )
   return response.json({ announcements: result.rows, emailConfigured: emailConfigured() })
 }))
@@ -615,7 +619,7 @@ router.post('/announcements/test', route(async (request, response) => {
   const values = announcementSchema.parse(request.body)
   const result = await sendMail({ to: request.auth.email, ...renderAnnouncement(request, values, request.auth.fullName) })
   if (!result.sent) throw new HttpError(400, result.reason)
-  return response.json({ sentTo: request.auth.email })
+  return response.json({ sentTo: 'your inbox' })
 }))
 
 router.post('/announcements', route(async (request, response) => {

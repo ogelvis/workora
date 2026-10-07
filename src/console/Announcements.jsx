@@ -21,7 +21,7 @@ const EMPTY = { category: 'product', audience: 'everyone', title: '', body: '', 
 const categoryInfo = (value) => CATEGORIES.find((item) => item.value === value) || CATEGORIES[0]
 
 function Composer({ emailReady, onSent }) {
-  const { account, toast } = useWorkspace()
+  const { toast } = useWorkspace()
   const [draft, setDraft] = useState(EMPTY)
   const [preview, setPreview] = useState(null)
   const [previewError, setPreviewError] = useState('')
@@ -102,7 +102,7 @@ function Composer({ emailReady, onSent }) {
         </div>
         {!emailReady && <div className="notice notice-warning"><Icon name="alert" size={16} /><span>Email sending isn’t set up yet, so announcements appear inside OVO only. Add RESEND_API_KEY and EMAIL_FROM in Vercel to email them.</span></div>}
         <div className="card-foot an-actions">
-          <Button icon="send" onClick={sendTest} disabled={!ready || Boolean(busy) || !emailReady}>{busy === 'test' ? 'Sending…' : `Send test to ${account.user.email}`}</Button>
+          <Button icon="send" onClick={sendTest} disabled={!ready || Boolean(busy) || !emailReady}>{busy === 'test' ? 'Sending…' : 'Send test to my inbox'}</Button>
           <Button type="submit" variant="primary" icon="bell" disabled={!ready || Boolean(busy)}>Send announcement</Button>
         </div>
       </form>

@@ -1,5 +1,6 @@
 import { createHmac, randomBytes } from 'node:crypto'
 import { pool } from './db.js'
+import { LEGAL_CONTACT_EMAIL } from '../shared/legal.js'
 
 const cookieName = 'ovo_session'
 const sessionDays = Number(process.env.SESSION_TTL_DAYS || 7)
@@ -30,6 +31,17 @@ export function platformAdminEmails() {
 
 export function isPlatformAdmin(email) {
   return platformAdminEmails().includes(String(email).trim().toLowerCase())
+}
+
+// The address shown for the platform owner everywhere in the app. The owner's real
+// sign-in email stays private: it's only used to sign in and to receive reset links.
+export function ownerPublicEmail() {
+  return ((process.env.PLATFORM_OWNER_EMAIL || '').trim() || LEGAL_CONTACT_EMAIL).toLowerCase()
+}
+
+// What to show for an account's email: owners appear under the public owner address.
+export function displayEmail(email) {
+  return isPlatformAdmin(email) ? ownerPublicEmail() : email
 }
 
 // The owner's private sign-in lives at a secret path set in ADMIN_PATH. The path is
