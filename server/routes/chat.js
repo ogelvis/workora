@@ -2,7 +2,7 @@ import express from 'express'
 import { z } from 'zod'
 import { pool } from '../db.js'
 import { requireAuth, requireRole } from '../auth.js'
-import { MANAGERS, HttpError, featuresFor, logActivity, route, validationError, withTransaction } from '../lib.js'
+import { MANAGERS, HttpError, assertVideoAllowed, featuresFor, logActivity, route, validationError, withTransaction } from '../lib.js'
 import { MAX_FILE_BYTES, assertStorage, uploadedName } from './files.js'
 import { deleteObjects, downloadUrl } from '../storage.js'
 
@@ -155,6 +155,7 @@ router.post('/channels/:id/messages', route(async (request, response) => {
 router.post('/channels/:id/attachments', rawUpload, route(async (request, response) => {
   z.uuid().parse(request.params.id)
   const upload = readUpload(request)
+  await assertVideoAllowed(pool, request.auth.organizationId, { name: upload.name, mimeType: upload.mimeType, head: upload.data.subarray(0, 16) })
   await assertChannel(request.auth.organizationId, request.params.id)
   const message = await withTransaction(async (client) => {
     await assertStorage(client, request.auth.organizationId, upload.data.length)
@@ -284,6 +285,7 @@ router.post('/dms/:id/messages', route(async (request, response) => {
 
 router.post('/dms/:id/attachments', rawUpload, route(async (request, response) => {
   const upload = readUpload(request)
+  await assertVideoAllowed(pool, request.auth.organizationId, { name: upload.name, mimeType: upload.mimeType, head: upload.data.subarray(0, 16) })
   const conversation = await findConversation(request)
   const message = await withTransaction(async (client) => {
     await assertStorage(client, request.auth.organizationId, upload.data.length)

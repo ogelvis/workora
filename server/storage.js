@@ -60,6 +60,13 @@ export async function objectSize(key) {
   return Number(response.headers.get('content-length'))
 }
 
+// The first bytes of a stored file (to recognise what it really is).
+export async function getObjectStart(key, length = 16) {
+  const response = await r2().fetch(objectUrl(key), { headers: { Range: `bytes=0-${length - 1}` } })
+  if (!response.ok) throw new Error(`R2 download failed (HTTP ${response.status}).`)
+  return new Uint8Array(await response.arrayBuffer()).subarray(0, length)
+}
+
 export async function getObject(key) {
   const response = await r2().fetch(objectUrl(key))
   if (!response.ok) throw new Error(`R2 download failed (HTTP ${response.status}).`)

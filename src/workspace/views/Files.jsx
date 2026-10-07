@@ -3,6 +3,7 @@ import Icon from '../../components/Icon.jsx'
 import { Avatar, Button, Field, IconButton, Meter, Modal, PageHeader } from '../../components/ui.jsx'
 import { api, uploadFile } from '../../lib/api.js'
 import { formatBytes, timeAgo } from '../../lib/format.js'
+import { looksLikeVideo } from '../../../shared/media.js'
 import { useWorkspace } from '../context.js'
 import { ShareModal } from '../Share.jsx'
 import { downloadZip } from '../../lib/zip.js'
@@ -82,7 +83,12 @@ function Files({ vault }) {
     let done = 0
     // Mirror the server's hard limit so people learn before uploading; the server still decides.
     let remaining = state.storage ? state.storage.limitBytes - state.storage.usedBytes : Infinity
+    const videosAllowed = account.subscription?.features?.videos === true
     for (const file of files) {
+      if (!videosAllowed && looksLikeVideo(file.name, file.type)) {
+        toast(`${file.name}: video uploads are part of the Enterprise plan. Share a link to the video instead, or upgrade.`, 'error')
+        continue
+      }
       if (file.size > state.maxFileBytes) {
         toast(`${file.name} is larger than ${formatBytes(state.maxFileBytes)}.`, 'error')
         continue

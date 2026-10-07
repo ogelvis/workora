@@ -91,5 +91,6 @@ export function planIncludes(plan, formatPrice, formatBytes) {
     ...(counted.length ? [joinWords(counted)] : []),
     ...(features.reports === false ? [] : ['Team daily & weekly reports']),
     features.chatHistoryDays ? `${features.chatHistoryDays}-day chat history` : 'Full chat history',
+    ...(features.videos ? ['Video uploads'] : []),
   ]
 }
