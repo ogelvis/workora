@@ -203,13 +203,13 @@ function LandingPage({ onGetStarted, onLogin }) {
           <a href="#pricing" onClick={closeMenu}>Pricing</a>
           <a href="#about" onClick={closeMenu}>About</a>
           <div className="lp-mobile-actions">
-            <InstallButton className="lp-login lp-get-app">Get the app</InstallButton>
+            <InstallButton className="lp-get-app">Get the app</InstallButton>
             <button type="button" className="lp-login" onClick={() => { closeMenu(); onLogin() }}>Log in</button>
             <button type="button" className="lp-nav-cta" onClick={() => { closeMenu(); onGetStarted() }}>Get started <span>↗</span></button>
           </div>
         </nav>
         <div className="lp-desktop-actions">
-          <InstallButton className="lp-login lp-get-app">Get the app</InstallButton>
+          <InstallButton className="lp-get-app">Get the app</InstallButton>
           <button type="button" className="lp-login" onClick={onLogin}>Log in</button>
           <button type="button" className="lp-nav-cta" onClick={onGetStarted}>Get started <span>↗</span></button>
         </div>

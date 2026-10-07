@@ -64,7 +64,7 @@ function InstallGuide({ initial, onClose }) {
 }
 
 // "Get the app" button: one tap where the browser supports it, otherwise clear steps.
-export function InstallButton({ className = '', children = 'Get the app', icon = true, ...rest }) {
+export function InstallButton({ className = '', children = 'Get the app', icon = 'download', ...rest }) {
   const install = useInstall()
   const [guide, setGuide] = useState(false)
   if (install.installed) return null
@@ -74,7 +74,7 @@ export function InstallButton({ className = '', children = 'Get the app', icon =
   }
   return (
     <>
-      <button type="button" className={className} onClick={start} {...rest}>{icon && <Icon name="download" size={16} />}{children}</button>
+      <button type="button" className={className} onClick={start} {...rest}>{icon && <span className="ia-btn-icon"><Icon name={icon} size={15} /></span>}<span>{children}</span></button>
       {guide && <InstallGuide initial={install.platform} onClose={() => setGuide(false)} />}
     </>
   )
