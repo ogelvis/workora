@@ -39,7 +39,7 @@ function Clients() {
                 <tr key={client.id}>
                   <td>
                     <button type="button" className="client-cell" onClick={() => openForm('client', client)}>
-                      <Avatar name={client.name} size="sm" />
+                      <Avatar name={client.name} size="sm" photo={false} />
                       <strong>{client.name}</strong>
                     </button>
                   </td>

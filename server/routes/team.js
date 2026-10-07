@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs'
 import express from 'express'
+import { avatarUrl } from './profile.js'
 import { paystackEnabled } from './billing.js'
 import { emailConfigured, inviteEmail, passwordResetEmail, sendMail } from '../mail.js'
 import { z } from 'zod'
@@ -65,6 +66,8 @@ async function getMember(db, organizationId, userId) {
 router.get('/members', route(async (request, response) => {
   const result = await pool.query(
     `SELECT u.id, u.full_name AS "fullName", u.email, om.role, om.created_at AS "joinedAt",
+            u.phone, u.job_title AS "jobTitle", to_char(u.date_of_birth, 'YYYY-MM-DD') AS "dateOfBirth",
+            (SELECT updated_at FROM user_avatars a WHERE a.user_id = u.id) AS "avatarAt",
             (SELECT count(*)::int FROM tasks t
              WHERE t.organization_id = om.organization_id AND t.assignee_id = u.id AND t.status != 'Completed') AS "openTasks"
      FROM organization_members om
@@ -73,7 +76,15 @@ router.get('/members', route(async (request, response) => {
      ORDER BY array_position(ARRAY['owner', 'admin', 'manager', 'staff'], om.role), u.full_name`,
     [request.auth.organizationId],
   )
-  return response.json({ members: result.rows })
+  // Everyone sees job titles and phone numbers; dates of birth are for owners and admins (and the person).
+  const seesBirthdays = ADMINS.includes(request.auth.role)
+  return response.json({
+    members: result.rows.map(({ avatarAt, dateOfBirth, ...member }) => ({
+      ...member,
+      avatarUrl: avatarUrl(member.id, avatarAt),
+      dateOfBirth: seesBirthdays || member.id === request.auth.userId ? dateOfBirth : null,
+    })),
+  })
 }))
 
 router.patch('/members/:userId', adminsOnly, route(async (request, response) => {

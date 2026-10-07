@@ -266,6 +266,7 @@ function WorkspaceDetail({ id, plans, onClose, onChanged }) {
                     <Avatar name={member.fullName} size="sm" />
                     <div><strong>{member.fullName}</strong><small>{member.email}</small></div>
                     <Pill>{capitalize(member.role)}</Pill>
+                    <a className="btn btn-sm" href={messageLink(member, data.organization?.name)}><Icon name="send" size={14} />Message</a>
                   </li>
                 ))}
               </ul>
@@ -576,6 +577,11 @@ export { AddPartner }
 
 // ---------------------------------------------------------------- Users
 
+// Opens Announcements with a direct message to this person ready to write.
+function messageLink(person, business) {
+  return `#/?${new URLSearchParams({ tab: 'announcements', to: person.id, toName: person.fullName, toBusiness: business || '' })}`
+}
+
 export function UsersSection() {
   const { toast } = useWorkspace()
   const [query, setQuery] = useState('')
@@ -621,7 +627,10 @@ export function UsersSection() {
                   <td>{user.role ? <Pill>{capitalize(user.role)}</Pill> : '—'}</td>
                   <td className="muted">{user.lastSignInAt ? timeAgo(user.lastSignInAt) : 'Never'}</td>
                   <td className="muted">{timeAgo(user.createdAt)}</td>
-                  <td className="cell-actions"><Button size="sm" icon="key" onClick={() => resetLink(user)}>Reset link</Button></td>
+                  <td className="cell-actions">
+                    {user.organizationId && <a className="btn btn-sm" href={messageLink(user, user.organizationName)}><Icon name="send" size={14} />Message</a>}
+                    <Button size="sm" icon="key" onClick={() => resetLink(user)}>Reset link</Button>
+                  </td>
                 </tr>
               ))}
             </tbody>
