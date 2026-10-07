@@ -593,3 +593,8 @@
 .lp-nav-cta, .lp-primary-button { background: linear-gradient(135deg, #6a3df5 0%, #5b2ef0 50%, #4318c9 100%); box-shadow: 0 10px 22px -12px rgba(91, 46, 240, 0.9); }
 .lp-nav-cta:hover, .lp-primary-button:hover { background: linear-gradient(135deg, #5b2ef0 0%, #4a1fd6 100%); }
 .lp-nav-cta span, .lp-primary-button span { color: #ffd166; }
+
+.lp-get-app { align-items: center; display: inline-flex; gap: 6px; }
+.lp-app-row { align-items: center; display: flex; flex-wrap: wrap; gap: 10px 14px; justify-content: center; margin-top: 22px; }
+.lp-app-button { align-items: center; background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 999px; color: inherit; cursor: pointer; display: inline-flex; font-size: 0.9rem; font-weight: 700; gap: 8px; padding: 10px 18px; }
+.lp-app-button:hover { background: rgba(255, 255, 255, 0.2); }

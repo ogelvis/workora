@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import './LandingPage.css'
 import { BrandMark } from './components/ui.jsx'
+import { InstallButton } from './components/InstallApp.jsx'
 import Icon from './components/Icon.jsx'
 import { formatPrice } from './lib/format.js'
 import { PLAN_DETAILS, includesList, planAmount } from './lib/plans.js'
@@ -202,11 +203,13 @@ function LandingPage({ onGetStarted, onLogin }) {
           <a href="#pricing" onClick={closeMenu}>Pricing</a>
           <a href="#about" onClick={closeMenu}>About</a>
           <div className="lp-mobile-actions">
+            <InstallButton className="lp-login lp-get-app">Get the app</InstallButton>
             <button type="button" className="lp-login" onClick={() => { closeMenu(); onLogin() }}>Log in</button>
             <button type="button" className="lp-nav-cta" onClick={() => { closeMenu(); onGetStarted() }}>Get started <span>↗</span></button>
           </div>
         </nav>
         <div className="lp-desktop-actions">
+          <InstallButton className="lp-login lp-get-app">Get the app</InstallButton>
           <button type="button" className="lp-login" onClick={onLogin}>Log in</button>
           <button type="button" className="lp-nav-cta" onClick={onGetStarted}>Get started <span>↗</span></button>
         </div>
@@ -307,7 +310,7 @@ function LandingPage({ onGetStarted, onLogin }) {
       </section>
 
       <section className="lp-cta-section lp-reveal">
-        <div className="lp-cta-orbit"><i /><i /><i /></div><div className="lp-cta-content"><div className="lp-section-label"><span>YOUR NEXT CHAPTER</span></div><h2>One vision.<br /><em>One organization.</em></h2><p>Create your OVO workspace, choose your industry and invite your team. Your first modules are ready the moment you arrive.</p><button type="button" className="lp-primary-button" onClick={onGetStarted}>Create your OVO workspace <span>↗</span></button><small>No payment taken during sign-up.</small></div>
+        <div className="lp-cta-orbit"><i /><i /><i /></div><div className="lp-cta-content"><div className="lp-section-label"><span>YOUR NEXT CHAPTER</span></div><h2>One vision.<br /><em>One organization.</em></h2><p>Create your OVO workspace, choose your industry and invite your team. Your first modules are ready the moment you arrive.</p><button type="button" className="lp-primary-button" onClick={onGetStarted}>Create your OVO workspace <span>↗</span></button><small>No payment taken during sign-up.</small><div className="lp-app-row"><InstallButton className="lp-app-button">Install OVO on your phone</InstallButton><small>iPhone, Android and computer. Free.</small></div></div>
       </section>
 
       <footer className="lp-footer"><a className="lp-brand" href="#top" aria-label="OVO home"><BrandMark size={30} /></a><p>One Vision. One Organization. One platform for the way your business actually works.</p><div className="lp-footer-links"><a href="#product">Product</a><a href="#features">Features</a><a href="#how-it-works">How it works</a><a href="#pricing">Plans</a><button type="button" onClick={onLogin}>Log in</button><button type="button" onClick={onGetStarted}>Create workspace</button></div><div className="lp-footer-bottom"><span>© {year} OVO</span><span>Built for organizations of every kind.</span><a href="/terms">Terms of Use</a><a href="/privacy">Privacy Policy</a><a href="#top">Back to top ↑</a></div></footer>

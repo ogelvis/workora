@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Icon from '../components/Icon.jsx'
+import { InstallBanner } from '../components/InstallApp.jsx'
 import { Avatar, AvatarContext, BrandMark, Confirm, IconButton, useToast } from '../components/ui.jsx'
 import { RecordForm } from '../components/RecordForms.jsx'
 import { recordTypes } from '../lib/constants.js'
@@ -379,6 +380,7 @@ function Workspace({ account, setAccount, onSignedOut }) {
       {paying && <PayModal onClose={() => setPaying(false)} />}
       {inviting && <InviteModal onClose={() => setInviting(false)} />}
       {newSheet !== null && <NewSheetModal initialTemplate={newSheet} onClose={() => setNewSheet(null)} />}
+      <InstallBanner />
     </AvatarContext.Provider>
     </WorkspaceContext.Provider>
   )

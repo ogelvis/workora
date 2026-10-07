@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import Icon from '../components/Icon.jsx'
+import { InstallButton } from '../components/InstallApp.jsx'
 import { Avatar } from '../components/ui.jsx'
 import { api } from '../lib/api.js'
 import { useWorkspace } from './context.js'
@@ -185,6 +186,7 @@ export function AccountMenu({ account, role, onInvite, onLogout }) {
           {admin && <button type="button" role="menuitem" onClick={() => go('/billing')}><Icon name="billing" size={16} />Plan & billing</button>}
           <button type="button" role="menuitem" onClick={() => go('/settings?tab=security')}><Icon name="shield" size={16} />Password & security</button>
           <button type="button" role="menuitem" onClick={() => go('/updates')}><Icon name="sparkle" size={16} />What’s new</button>
+          <InstallButton className="account-install" role="menuitem">Install the app</InstallButton>
           <button type="button" role="menuitem" className="account-logout" onClick={() => { setOpen(false); onLogout() }}><Icon name="logout" size={16} />Log out</button>
         </div>
       )}
