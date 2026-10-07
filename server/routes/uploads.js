@@ -2,10 +2,10 @@ import express from 'express'
 import { z } from 'zod'
 import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
-import { ADMINS, HttpError, getSubscription, logActivity, route, withTransaction } from '../lib.js'
+import { ADMINS, HttpError, assertVideoAllowed, getSubscription, logActivity, route, withTransaction } from '../lib.js'
 import { FOLDERS, VAULT_FOLDERS, assertStorage, folderNames, storageUsed } from './files.js'
 import { addChannelAttachment, addDirectAttachment, assertChannel, findConversation } from './chat.js'
-import { R2_MAX_FILE_BYTES, deleteObjects, newStorageKey, objectSize, r2Configured, readTicket, signTicket, uploadUrl } from '../storage.js'
+import { R2_MAX_FILE_BYTES, deleteObjects, getObjectStart, newStorageKey, objectSize, r2Configured, readTicket, signTicket, uploadUrl } from '../storage.js'
 import { formatStorage } from '../format.js'
 
 // Large files go straight from the browser to Cloudflare R2:
@@ -41,6 +41,7 @@ router.post('/uploads', route(async (request, response) => {
   if (!r2Configured()) return response.json({ direct: false })
   const values = startSchema.parse(request.body)
   const extra = await checkTarget(request, values)
+  await assertVideoAllowed(pool, request.auth.organizationId, { name: values.name, mimeType: values.type })
   const [subscription, used] = await Promise.all([getSubscription(pool, request.auth.organizationId), storageUsed(pool, request.auth.organizationId)])
   const limit = subscription ? Number(subscription.storage_limit_bytes) : 0
   if (used + values.size > limit) {
@@ -66,6 +67,13 @@ router.post('/uploads/complete', route(async (request, response) => {
   // Each upload is recorded once; completing it again would point two records at one object.
   const recorded = await pool.query('SELECT 1 FROM files WHERE storage_key = $1 UNION ALL SELECT 1 FROM chat_attachments WHERE storage_key = $1', [ticket.key])
   if (recorded.rowCount) throw new HttpError(409, 'This file has already been saved.')
+  // The browser named it; the content decides. A renamed video is refused and removed.
+  try {
+    await assertVideoAllowed(pool, request.auth.organizationId, { name: ticket.name, mimeType: ticket.type, head: await getObjectStart(ticket.key) })
+  } catch (error) {
+    if (error.code === 'upgrade') await deleteObjects([ticket.key])
+    throw error
+  }
   const upload = { name: ticket.name, mimeType: ticket.type, size, storageKey: ticket.key, caption }
   const result = await withTransaction(async (client) => {
     await assertStorage(client, request.auth.organizationId, size)

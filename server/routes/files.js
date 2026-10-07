@@ -2,7 +2,7 @@ import express from 'express'
 import { z } from 'zod'
 import { pool } from '../db.js'
 import { requireAuth } from '../auth.js'
-import { ADMINS, HttpError, MANAGERS, getSubscription, logActivity, route, withTransaction } from '../lib.js'
+import { ADMINS, HttpError, MANAGERS, assertVideoAllowed, getSubscription, logActivity, route, withTransaction } from '../lib.js'
 import { formatStorage } from '../format.js'
 import { R2_MAX_FILE_BYTES, deleteObjects, downloadUrl, r2Configured } from '../storage.js'
 
@@ -132,6 +132,7 @@ router.post(
       return response.status(400).json({ error: 'The uploaded file is empty.' })
     }
     const size = request.body.length
+    await assertVideoAllowed(pool, request.auth.organizationId, { name, mimeType, head: request.body.subarray(0, 16) })
 
     const file = await withTransaction(async (client) => {
       // The subscription row lock inside assertStorage serialises uploads so they cannot overshoot.

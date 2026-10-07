@@ -60,6 +60,7 @@ const planSchema = z.object({
     automations: z.number().int().min(0).max(100000).nullable(),
     reports: z.boolean(),
     chatHistoryDays: z.number().int().min(1).max(36500).nullable(),
+    videos: z.boolean().optional().default(false),
   }).optional(),
 })
 

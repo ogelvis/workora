@@ -674,6 +674,7 @@ function PlanCard({ plan, onSaved }) {
             automations: values.automations === '' ? null : Number(values.automations),
             reports: values.reports === 'on',
             chatHistoryDays: values.chatHistoryDays === '' ? null : Number(values.chatHistoryDays),
+            videos: values.videos === 'on',
           },
         },
       })
@@ -708,6 +709,7 @@ function PlanCard({ plan, onSaved }) {
         <Field label="Automations" hint="Empty = unlimited"><input name="automations" type="number" min="0" defaultValue={features.automations ?? ''} /></Field>
         <Field label="Chat history (days)" hint="Empty = keep everything"><input name="chatHistoryDays" type="number" min="1" defaultValue={features.chatHistoryDays ?? ''} /></Field>
         <label className="toggle"><input type="checkbox" name="reports" defaultChecked={features.reports !== false} /> Team reports</label>
+        <label className="toggle"><input type="checkbox" name="videos" defaultChecked={features.videos === true} /> Video uploads</label>
       </fieldset>
       <div className="card-foot">
         <span className="plan-preview">

@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { z } from 'zod'
 import { pool } from './db.js'
 import { hashToken } from './auth.js'
+import { hasVideoSignature, looksLikeVideo } from '../shared/media.js'
 
 export const MANAGERS = ['owner', 'admin', 'manager']
 export const ADMINS = ['owner', 'admin']
@@ -97,6 +98,8 @@ export function planFeatures(features) {
     automations: value.automations ?? null,
     reports: value.reports ?? true,
     chatHistoryDays: value.chatHistoryDays ?? null,
+    // Video uploads are an Enterprise feature; plans that don't say otherwise don't include them.
+    videos: value.videos ?? false,
   }
 }
 
@@ -146,6 +149,15 @@ export async function assertPlanCount(db, organizationId, key, table, noun) {
   if (count.rows[0].count >= limit) {
     throw new HttpError(403, `The ${subscription.plan_name} plan includes ${limit} ${limit === 1 ? noun : `${noun}s`}. Upgrade your plan in Billing to add more.`, 'upgrade')
   }
+}
+
+// Refuses a video on plans without video uploads. Checks the name and type, and the
+// first bytes of the file when we have them (so renaming a video doesn't get round it).
+export async function assertVideoAllowed(db, organizationId, { name, mimeType, head }) {
+  if (!looksLikeVideo(name, mimeType) && !hasVideoSignature(head)) return
+  const subscription = await getSubscription(db, organizationId)
+  if (subscription?.features.videos) return
+  throw new HttpError(403, 'Video uploads are part of the Enterprise plan. Contact OVO to upgrade, or share a link to the video instead.', 'upgrade')
 }
 
 // Wraps an async route so thrown HttpErrors become JSON responses.

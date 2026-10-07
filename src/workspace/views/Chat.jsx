@@ -4,6 +4,7 @@ import { Avatar, Button, Field, IconButton, Modal } from '../../components/ui.js
 import { api, directUpload } from '../../lib/api.js'
 import { formatBytes, formatTime } from '../../lib/format.js'
 import { downloadZip } from '../../lib/zip.js'
+import { looksLikeVideo } from '../../../shared/media.js'
 import { useWorkspace } from '../context.js'
 
 const POLL_MS = 4000
@@ -187,6 +188,11 @@ function Chat() {
   async function attach(fileList) {
     const file = fileList?.[0]
     if (!file || !base) return
+    if (account.subscription?.features?.videos !== true && looksLikeVideo(file.name, file.type)) {
+      toast('Video uploads are part of the Enterprise plan. Share a link to the video instead, or upgrade.', 'error')
+      if (fileInput.current) fileInput.current.value = ''
+      return
+    }
     setAttaching(`Sending ${file.name}…`)
     try {
       // Large files go straight to cloud storage when it's set up; otherwise through the API (up to 4 MB).
